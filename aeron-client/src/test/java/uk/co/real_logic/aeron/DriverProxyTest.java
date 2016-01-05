@@ -38,18 +38,31 @@ public class DriverProxyTest
     private static final long CORRELATION_ID = 3;
     private final RingBuffer conductorBuffer = new ManyToOneRingBuffer(
         new UnsafeBuffer(ByteBuffer.allocateDirect(TRAILER_LENGTH + 1024)));
-    private final DriverProxy conductor = new DriverProxy(conductorBuffer);
+    private final DriverProxy driverProxy = new DriverProxy(conductorBuffer);
 
     @Test
     public void threadSendsAddChannelMessage()
     {
-        threadSendsChannelMessage(() -> conductor.addPublication(CHANNEL, STREAM_ID), ADD_PUBLICATION);
+        driverProxy.addPublication(CHANNEL, STREAM_ID);
+
+        assertReadsOneMessage(
+            (msgTypeId, buffer, index, length) ->
+            {
+                final PublicationMessageFlyweight publicationMessage = new PublicationMessageFlyweight();
+                publicationMessage.wrap(buffer, (int) index);
+
+                assertThat(msgTypeId, is(ADD_PUBLICATION));
+                assertThat(publicationMessage.channel(), is(CHANNEL));
+                assertThat(publicationMessage.streamId(), is(STREAM_ID));
+            }
+        );
     }
 
     @Test
     public void threadSendsRemoveChannelMessage()
     {
-        conductor.removePublication(CORRELATION_ID);
+        driverProxy.removePublication(CORRELATION_ID);
+
         assertReadsOneMessage(
             (msgTypeId, buffer, index, length) ->
             {
@@ -62,27 +75,10 @@ public class DriverProxyTest
         );
     }
 
-    private void threadSendsChannelMessage(final Runnable sendMessage, final int expectedMsgTypeId)
-    {
-        sendMessage.run();
-
-        assertReadsOneMessage(
-            (msgTypeId, buffer, index, length) ->
-            {
-                final PublicationMessageFlyweight publicationMessage = new PublicationMessageFlyweight();
-                publicationMessage.wrap(buffer, (int) index);
-
-                assertThat(msgTypeId, is(expectedMsgTypeId));
-                assertThat(publicationMessage.channel(), is(CHANNEL));
-                assertThat(publicationMessage.streamId(), is(STREAM_ID));
-            }
-        );
-    }
-
     @Test
     public void threadSendsRemoveSubscriberMessage()
     {
-        conductor.removeSubscription(CORRELATION_ID);
+        driverProxy.removeSubscription(CORRELATION_ID);
 
         assertReadsOneMessage(
             (msgTypeId, buffer, index, length) ->

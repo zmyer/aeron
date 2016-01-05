@@ -70,13 +70,13 @@ public class RawLogFactoryTest
             {
                 final UnsafeBuffer term = partition.termBuffer();
 
-                assertThat(term.capacity(), is(TERM_BUFFER_LENGTH));
+                assertThat(term.capacity(), is((long) TERM_BUFFER_LENGTH));
                 assertThat(term.getByte(0), is((byte)0));
                 assertThat(term.getByte(TERM_BUFFER_LENGTH - 1), is((byte)0));
 
                 final UnsafeBuffer metaData = partition.metaDataBuffer();
 
-                assertThat(metaData.capacity(), is(LogBufferDescriptor.TERM_META_DATA_LENGTH));
+                assertThat(metaData.capacity(), is((long) LogBufferDescriptor.TERM_META_DATA_LENGTH));
                 assertThat(metaData.getByte(0), is((byte)0));
                 assertThat(metaData.getByte(LogBufferDescriptor.TERM_META_DATA_LENGTH - 1), is((byte)0));
             });
@@ -86,9 +86,9 @@ public class RawLogFactoryTest
     public void shouldCreateCorrectLengthAndZeroedFilesForImage() throws Exception
     {
         final String canonicalForm = udpChannel.canonicalForm();
-        final int imageTermBufferMaxLength = TERM_BUFFER_LENGTH / 2;
+        final long imageTermBufferMaxLength = TERM_BUFFER_LENGTH / 2;
         final RawLog rawLog = rawLogFactory.newNetworkedImage(
-            canonicalForm, SESSION_ID, STREAM_ID, CREATION_ID, imageTermBufferMaxLength);
+            canonicalForm, SESSION_ID, STREAM_ID, CREATION_ID, (int) imageTermBufferMaxLength);
 
         rawLog.stream().forEach(
             (partition) ->
@@ -101,7 +101,7 @@ public class RawLogFactoryTest
 
                 final UnsafeBuffer metaData = partition.metaDataBuffer();
 
-                assertThat(metaData.capacity(), is(LogBufferDescriptor.TERM_META_DATA_LENGTH));
+                assertThat(metaData.capacity(), is((long) LogBufferDescriptor.TERM_META_DATA_LENGTH));
                 assertThat(metaData.getByte(0), is((byte)0));
                 assertThat(metaData.getByte(LogBufferDescriptor.TERM_META_DATA_LENGTH - 1), is((byte)0));
             });

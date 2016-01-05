@@ -36,7 +36,7 @@ public class BufferBuilderTest
     public void shouldInitialiseToDefaultValues()
     {
         assertThat(bufferBuilder.capacity(), is(INITIAL_CAPACITY));
-        assertThat(bufferBuilder.buffer().capacity(), is(INITIAL_CAPACITY));
+        assertThat(bufferBuilder.buffer().capacity(), is((long) INITIAL_CAPACITY));
         assertThat(bufferBuilder.limit(), is(0));
     }
 
@@ -57,7 +57,7 @@ public class BufferBuilderTest
 
         bufferBuilder.append(srcBuffer, 0, (int) srcBuffer.capacity());
 
-        assertThat(bufferBuilder.limit(), is(srcBuffer.capacity()));
+        assertThat(bufferBuilder.limit(), is((int) srcBuffer.capacity()));
 
         bufferBuilder.reset();
 
