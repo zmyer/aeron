@@ -54,7 +54,7 @@ public class DriverProxyTest
             (msgTypeId, buffer, index, length) ->
             {
                 final RemoveMessageFlyweight message = new RemoveMessageFlyweight();
-                message.wrap(buffer, index);
+                message.wrap(buffer, (int) index);
 
                 assertThat(msgTypeId, is(REMOVE_PUBLICATION));
                 assertThat(message.registrationId(), is(CORRELATION_ID));
@@ -70,7 +70,7 @@ public class DriverProxyTest
             (msgTypeId, buffer, index, length) ->
             {
                 final PublicationMessageFlyweight publicationMessage = new PublicationMessageFlyweight();
-                publicationMessage.wrap(buffer, index);
+                publicationMessage.wrap(buffer, (int) index);
 
                 assertThat(msgTypeId, is(expectedMsgTypeId));
                 assertThat(publicationMessage.channel(), is(CHANNEL));
@@ -88,7 +88,7 @@ public class DriverProxyTest
             (msgTypeId, buffer, index, length) ->
             {
                 final RemoveMessageFlyweight removeMessage = new RemoveMessageFlyweight();
-                removeMessage.wrap(buffer, index);
+                removeMessage.wrap(buffer, (int) index);
 
                 assertThat(msgTypeId, is(REMOVE_SUBSCRIPTION));
                 assertThat(removeMessage.registrationId(), is(CORRELATION_ID));

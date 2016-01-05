@@ -59,7 +59,7 @@ public class ImageTest
     private static final String SOURCE_IDENTITY = "ipc";
     private static final int INITIAL_TERM_ID = 0xEE81D;
     private static final int MESSAGE_LENGTH = HEADER_LENGTH + DATA.length;
-    private static final int ALIGNED_FRAME_LENGTH = align(MESSAGE_LENGTH, FrameDescriptor.FRAME_ALIGNMENT);
+    private static final int ALIGNED_FRAME_LENGTH = (int) align(MESSAGE_LENGTH, FrameDescriptor.FRAME_ALIGNMENT);
 
     private final UnsafeBuffer rcvBuffer = new UnsafeBuffer(allocateDirect(ALIGNED_FRAME_LENGTH));
     private final DataHeaderFlyweight dataHeader = new DataHeaderFlyweight();

@@ -66,7 +66,7 @@ public class DirectPublication implements DriverManagedResource
             .map((partition) -> new LogBufferPartition(partition.termBuffer(), partition.metaDataBuffer()))
             .toArray(LogBufferPartition[]::new);
 
-        final int termLength = logPartitions[0].termBuffer().capacity();
+        final int termLength = (int) logPartitions[0].termBuffer().capacity();
 
         this.termWindowLength = Configuration.ipcPublicationTermWindowLength(termLength);
         this.positionBitsToShift = Integer.numberOfTrailingZeros(termLength);

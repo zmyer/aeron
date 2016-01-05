@@ -60,7 +60,7 @@ public class SenderTest
 
     private static final UnsafeBuffer HEADER =
         DataHeaderFlyweight.createDefaultHeader(SESSION_ID, STREAM_ID, INITIAL_TERM_ID);
-    private static final int ALIGNED_FRAME_LENGTH = align(HEADER.capacity() + PAYLOAD.length, FRAME_ALIGNMENT);
+    private static final int ALIGNED_FRAME_LENGTH = (int) align(HEADER.capacity() + PAYLOAD.length, FRAME_ALIGNMENT);
 
     private final EventLogger mockLogger = mock(EventLogger.class);
     private final ControlTransportPoller mockTransportPoller = mock(ControlTransportPoller.class);
@@ -427,6 +427,6 @@ public class SenderTest
 
     private int offsetOfMessage(final int offset)
     {
-        return (offset - 1) * align(HEADER.capacity() + PAYLOAD.length, FRAME_ALIGNMENT);
+        return (int) ((offset - 1) * align(HEADER.capacity() + PAYLOAD.length, FRAME_ALIGNMENT));
     }
 }

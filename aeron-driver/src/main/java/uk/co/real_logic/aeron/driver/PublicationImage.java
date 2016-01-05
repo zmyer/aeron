@@ -156,7 +156,7 @@ public class PublicationImage
         termBuffers = rawLog.stream().map(RawLogPartition::termBuffer).toArray(UnsafeBuffer[]::new);
         this.lossDetector = new LossDetector(lossFeedbackDelayGenerator, this);
 
-        final int termCapacity = termBuffers[0].capacity();
+        final int termCapacity = (int) termBuffers[0].capacity();
 
         this.currentWindowLength = Math.min(termCapacity, initialWindowLength);
         this.currentGain = Math.min(currentWindowLength / 4, termCapacity / 4);

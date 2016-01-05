@@ -15,14 +15,6 @@
  */
 package uk.co.real_logic.aeron.samples;
 
-import static uk.co.real_logic.aeron.samples.SamplesUtil.rateReporterHandler;
-
-import java.nio.ByteBuffer;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-
 import uk.co.real_logic.aeron.Aeron;
 import uk.co.real_logic.aeron.Publication;
 import uk.co.real_logic.aeron.Subscription;
@@ -32,6 +24,14 @@ import uk.co.real_logic.aeron.logbuffer.FragmentHandler;
 import uk.co.real_logic.agrona.concurrent.BusySpinIdleStrategy;
 import uk.co.real_logic.agrona.concurrent.UnsafeBuffer;
 import uk.co.real_logic.agrona.console.ContinueBarrier;
+
+import java.nio.ByteBuffer;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import static uk.co.real_logic.aeron.samples.SamplesUtil.rateReporterHandler;
 
 public class EmbeddedThroughput
 {
@@ -89,7 +89,7 @@ public class EmbeddedThroughput
                     ATOMIC_BUFFER.putLong(0, i);
 
                     OFFER_IDLE_STRATEGY.reset();
-                    while (publication.offer(ATOMIC_BUFFER, 0, ATOMIC_BUFFER.capacity()) < 0)
+                    while (publication.offer(ATOMIC_BUFFER, 0, (int) ATOMIC_BUFFER.capacity()) < 0)
                     {
                         OFFER_IDLE_STRATEGY.idle();
                         backPressureCount++;

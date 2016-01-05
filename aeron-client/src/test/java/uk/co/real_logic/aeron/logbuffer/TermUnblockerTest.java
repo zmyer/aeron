@@ -44,7 +44,7 @@ public class TermUnblockerTest
     @Before
     public void setUp()
     {
-        when(mockTermBuffer.capacity()).thenReturn(TERM_BUFFER_CAPACITY);
+        when(mockTermBuffer.capacity()).thenReturn((long) TERM_BUFFER_CAPACITY);
     }
 
     @Test

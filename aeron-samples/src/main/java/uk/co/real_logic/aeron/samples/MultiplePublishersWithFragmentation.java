@@ -62,7 +62,7 @@ public class MultiplePublishersWithFragmentation
                 {
                     if (j <= 5000)
                     {
-                        result1 = publication1.offer(BUFFER_1, 0, BUFFER_1.capacity());
+                        result1 = publication1.offer(BUFFER_1, 0, (int) BUFFER_1.capacity());
                         if (result1 < 0L)
                         {
                             if (result1 == Publication.BACK_PRESSURED)
@@ -91,7 +91,7 @@ public class MultiplePublishersWithFragmentation
 
                     if (k <= 5000)
                     {
-                        result2 = publication2.offer(BUFFER_2, 0, BUFFER_2.capacity());
+                        result2 = publication2.offer(BUFFER_2, 0, (int) BUFFER_2.capacity());
                         if (result2 < 0L)
                         {
                             if (result2 == Publication.BACK_PRESSURED)

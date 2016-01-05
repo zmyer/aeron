@@ -58,12 +58,12 @@ public class EventLogger
         }
     }
 
-    public void log(final EventCode code, final MutableDirectBuffer buffer, final int offset, final int length)
+    public void log(final EventCode code, final MutableDirectBuffer buffer, final long offset, final long length)
     {
         if (isEnabled(code, ENABLED_EVENT_CODES))
         {
             final MutableDirectBuffer encodedBuffer = ENCODING_BUFFER.get();
-            final int encodedLength = EventCodec.encode(encodedBuffer, buffer, offset, length);
+            final int encodedLength = EventCodec.encode(encodedBuffer, buffer, (int) offset, (int) length);
 
             ringBuffer.write(code.id(), encodedBuffer, 0, encodedLength);
         }

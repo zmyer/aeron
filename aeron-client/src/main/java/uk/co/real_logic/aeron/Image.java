@@ -242,7 +242,7 @@ public class Image
 
         try
         {
-            final int capacity = termBuffer.capacity();
+            final int capacity = (int) termBuffer.capacity();
             do
             {
                 final int length = frameLengthVolatile(termBuffer, offset);
@@ -252,7 +252,7 @@ public class Image
                 }
 
                 final int frameOffset = offset;
-                final int alignedLength = BitUtil.align(length, FRAME_ALIGNMENT);
+                final int alignedLength = (int) BitUtil.align(length, FRAME_ALIGNMENT);
                 offset += alignedLength;
 
                 if (!isPaddingFrame(termBuffer, frameOffset))
@@ -313,7 +313,7 @@ public class Image
         final long position = subscriberPosition.get();
         final int termOffset = (int)position & termLengthMask;
         final UnsafeBuffer termBuffer = activeTermBuffer(position);
-        final int limit = Math.min(termOffset + blockLengthLimit, termBuffer.capacity());
+        final int limit = Math.min(termOffset + blockLengthLimit, (int) termBuffer.capacity());
 
         final int resultingOffset = TermBlockScanner.scan(termBuffer, termOffset, limit);
 
@@ -356,7 +356,7 @@ public class Image
         final int termOffset = (int)position & termLengthMask;
         final int activeIndex = indexByPosition(position, positionBitsToShift);
         final UnsafeBuffer termBuffer = termBuffers[activeIndex];
-        final int capacity = termBuffer.capacity();
+        final int capacity = (int) termBuffer.capacity();
         final int limit = Math.min(termOffset + blockLengthLimit, capacity);
 
         final int resultingOffset = TermBlockScanner.scan(termBuffer, termOffset, limit);

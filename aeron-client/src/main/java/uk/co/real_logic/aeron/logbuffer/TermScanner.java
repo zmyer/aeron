@@ -40,7 +40,7 @@ public final class TermScanner
      */
     public static long scanForAvailability(final UnsafeBuffer termBuffer, final int offset, int maxLength)
     {
-        maxLength = Math.min(maxLength, termBuffer.capacity() - offset);
+        maxLength = Math.min(maxLength, (int) termBuffer.capacity() - offset);
         int available = 0;
         int padding = 0;
 
@@ -53,7 +53,7 @@ public final class TermScanner
                 break;
             }
 
-            int alignedFrameLength = align(frameLength, FRAME_ALIGNMENT);
+            int alignedFrameLength = (int) align(frameLength, FRAME_ALIGNMENT);
             if (isPaddingFrame(termBuffer, termOffset))
             {
                 padding = alignedFrameLength - HEADER_LENGTH;

@@ -93,7 +93,9 @@ public class LossDetector implements GapHandler
             final int hwmTermsCount = (int)(hwmPosition >>> positionBitsToShift);
 
             final int activeTermId = initialTermId + rebuildTermsCount;
-            final int activeTermLimit = (rebuildTermsCount == hwmTermsCount) ? hwmTermOffset : termBuffer.capacity();
+            final int activeTermLimit = (rebuildTermsCount == hwmTermsCount)
+                                      ? hwmTermOffset
+                                      : (int) termBuffer.capacity();
             rebuildOffset = activeTermLimit;
 
             rebuildOffset = scanForGap(termBuffer, activeTermId, rebuildTermOffset, activeTermLimit, this);

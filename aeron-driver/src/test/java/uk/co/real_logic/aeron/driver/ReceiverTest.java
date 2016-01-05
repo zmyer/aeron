@@ -439,9 +439,9 @@ public class ReceiverTest
     @Test
     public void shouldHandleNonZeroTermOffsetCorrectly() throws Exception
     {
-        final int initialTermOffset = align(TERM_BUFFER_LENGTH / 16, FrameDescriptor.FRAME_ALIGNMENT);
+        final int initialTermOffset = (int) align(TERM_BUFFER_LENGTH / 16, FrameDescriptor.FRAME_ALIGNMENT);
         final int alignedDataFrameLength =
-            align(DataHeaderFlyweight.HEADER_LENGTH + FAKE_PAYLOAD.length, FrameDescriptor.FRAME_ALIGNMENT);
+            (int) align(DataHeaderFlyweight.HEADER_LENGTH + FAKE_PAYLOAD.length, FrameDescriptor.FRAME_ALIGNMENT);
 
         receiverProxy.registerReceiveChannelEndpoint(receiveChannelEndpoint);
         receiverProxy.addSubscription(receiveChannelEndpoint, STREAM_ID);

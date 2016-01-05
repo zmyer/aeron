@@ -90,7 +90,8 @@ public class CncFileDescriptor
 
     public static final int META_DATA_LENGTH = CLIENT_LIVENESS_TIMEOUT_FIELD_OFFSET + BitUtil.SIZE_OF_LONG;
 
-    public static final int END_OF_META_DATA_OFFSET = align(BitUtil.SIZE_OF_INT + META_DATA_LENGTH, BitUtil.CACHE_LINE_LENGTH);
+    public static final int END_OF_META_DATA_OFFSET =
+        (int) align(BitUtil.SIZE_OF_INT + META_DATA_LENGTH, BitUtil.CACHE_LINE_LENGTH);
 
     /**
      * Compute the length of the cnc file and return it.

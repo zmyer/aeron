@@ -78,7 +78,7 @@ public class BufferClaim
      */
     public int length()
     {
-        return buffer.capacity() - DataHeaderFlyweight.HEADER_LENGTH;
+        return capacity() - DataHeaderFlyweight.HEADER_LENGTH;
     }
 
     /**
@@ -86,7 +86,7 @@ public class BufferClaim
      */
     public void commit()
     {
-        int frameLength = buffer.capacity();
+        int frameLength = capacity();
         if (ByteOrder.nativeOrder() != LITTLE_ENDIAN)
         {
             frameLength = Integer.reverseBytes(frameLength);
@@ -100,7 +100,7 @@ public class BufferClaim
      */
     public void abort()
     {
-        int frameLength = buffer.capacity();
+        int frameLength = capacity();
         if (ByteOrder.nativeOrder() != LITTLE_ENDIAN)
         {
             frameLength = Integer.reverseBytes(frameLength);
@@ -108,6 +108,11 @@ public class BufferClaim
 
         buffer.putShort(TYPE_FIELD_OFFSET, (short)HDR_TYPE_PAD, LITTLE_ENDIAN);
         buffer.putIntOrdered(FRAME_LENGTH_FIELD_OFFSET, frameLength);
+    }
+
+    private int capacity()
+    {
+        return (int) buffer.capacity();
     }
 }
 

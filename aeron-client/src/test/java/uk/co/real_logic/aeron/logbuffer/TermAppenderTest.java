@@ -54,8 +54,8 @@ public class TermAppenderTest
     @Before
     public void setUp()
     {
-        when(termBuffer.capacity()).thenReturn(TERM_BUFFER_LENGTH);
-        when(metaDataBuffer.capacity()).thenReturn(META_DATA_BUFFER_LENGTH);
+        when(termBuffer.capacity()).thenReturn((long) TERM_BUFFER_LENGTH);
+        when(metaDataBuffer.capacity()).thenReturn((long) META_DATA_BUFFER_LENGTH);
 
         termAppender = new TermAppender(termBuffer, metaDataBuffer);
     }
@@ -75,11 +75,11 @@ public class TermAppenderTest
     @Test
     public void shouldAppendFrameToEmptyLog()
     {
-        final int headerLength = DEFAULT_HEADER.capacity();
+        final int headerLength = capacity();
         final UnsafeBuffer buffer = new UnsafeBuffer(new byte[128]);
         final int msgLength = 20;
         final int frameLength = msgLength + headerLength;
-        final int alignedFrameLength = align(frameLength, FRAME_ALIGNMENT);
+        final int alignedFrameLength = frameLengthAligned(frameLength);
         final int tail = 0;
 
         when(metaDataBuffer.getAndAddLong(TERM_TAIL_COUNTER_OFFSET, alignedFrameLength))
@@ -94,14 +94,24 @@ public class TermAppenderTest
         inOrder.verify(termBuffer, times(1)).putIntOrdered(tail, frameLength);
     }
 
+    private int frameLengthAligned(final int frameLength)
+    {
+        return (int) align(frameLength, FRAME_ALIGNMENT);
+    }
+
+    private int capacity()
+    {
+        return (int) DEFAULT_HEADER.capacity();
+    }
+
     @Test
     public void shouldAppendFrameTwiceToLog()
     {
-        final int headerLength = DEFAULT_HEADER.capacity();
+        final int headerLength = capacity();
         final UnsafeBuffer buffer = new UnsafeBuffer(new byte[128]);
         final int msgLength = 20;
         final int frameLength = msgLength + headerLength;
-        final int alignedFrameLength = align(frameLength, FRAME_ALIGNMENT);
+        final int alignedFrameLength = frameLengthAligned(frameLength);
         int tail = 0;
 
         when(metaDataBuffer.getAndAddLong(TERM_TAIL_COUNTER_OFFSET, alignedFrameLength))
@@ -130,9 +140,9 @@ public class TermAppenderTest
     public void shouldPadLogAndTripWhenAppendingWithInsufficientRemainingCapacity()
     {
         final int msgLength = 120;
-        final int headerLength = DEFAULT_HEADER.capacity();
-        final int requiredFrameSize = align(headerLength + msgLength, FRAME_ALIGNMENT);
-        final int tailValue = TERM_BUFFER_LENGTH - align(msgLength, FRAME_ALIGNMENT);
+        final int headerLength = capacity();
+        final int requiredFrameSize = frameLengthAligned(headerLength + msgLength);
+        final int tailValue = TERM_BUFFER_LENGTH - frameLengthAligned(msgLength);
         final UnsafeBuffer buffer = new UnsafeBuffer(new byte[128]);
         final int frameLength = TERM_BUFFER_LENGTH - tailValue;
 
@@ -152,9 +162,9 @@ public class TermAppenderTest
     @Test
     public void shouldPadLogAndTripWhenAppendingWithInsufficientRemainingCapacityIncludingHeader()
     {
-        final int headerLength = DEFAULT_HEADER.capacity();
+        final int headerLength = capacity();
         final int msgLength = 120;
-        final int requiredFrameSize = align(headerLength + msgLength, FRAME_ALIGNMENT);
+        final int requiredFrameSize = frameLengthAligned(headerLength + msgLength);
         final int tailValue = TERM_BUFFER_LENGTH - (requiredFrameSize + (headerLength - FRAME_ALIGNMENT));
         final UnsafeBuffer buffer = new UnsafeBuffer(new byte[128]);
         final int frameLength = TERM_BUFFER_LENGTH - tailValue;
@@ -176,9 +186,9 @@ public class TermAppenderTest
     public void shouldFragmentMessageOverTwoFrames()
     {
         final int msgLength = MAX_PAYLOAD_LENGTH + 1;
-        final int headerLength = DEFAULT_HEADER.capacity();
+        final int headerLength = capacity();
         final int frameLength = headerLength + 1;
-        final int requiredCapacity = align(headerLength + 1, FRAME_ALIGNMENT) + MAX_FRAME_LENGTH;
+        final int requiredCapacity = frameLengthAligned(headerLength + 1) + MAX_FRAME_LENGTH;
         final UnsafeBuffer buffer = new UnsafeBuffer(new byte[msgLength]);
         int tail  = 0;
 
@@ -206,10 +216,10 @@ public class TermAppenderTest
     @Test
     public void shouldClaimRegionForZeroCopyEncoding()
     {
-        final int headerLength = DEFAULT_HEADER.capacity();
+        final int headerLength = capacity();
         final int msgLength = 20;
         final int frameLength = msgLength + headerLength;
-        final int alignedFrameLength = align(frameLength, FRAME_ALIGNMENT);
+        final int alignedFrameLength = frameLengthAligned(frameLength);
         final int tail = 0;
         final BufferClaim bufferClaim = new BufferClaim();
 

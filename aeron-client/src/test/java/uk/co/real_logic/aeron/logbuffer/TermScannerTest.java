@@ -25,7 +25,7 @@ public class TermScannerTest
     @Before
     public void setUp()
     {
-        when(termBuffer.capacity()).thenReturn(TERM_BUFFER_CAPACITY);
+        when(termBuffer.capacity()).thenReturn((long) TERM_BUFFER_CAPACITY);
     }
 
     @Test
@@ -53,7 +53,7 @@ public class TermScannerTest
     {
         final int msgLength = 1;
         final int frameLength = HEADER_LENGTH + msgLength;
-        final int alignedFrameLength = align(frameLength, FRAME_ALIGNMENT);
+        final int alignedFrameLength = frameLengthAligned(frameLength);
         final int frameOffset = 0;
 
         when(termBuffer.getIntVolatile(frameOffset)).thenReturn(frameLength);
@@ -68,12 +68,17 @@ public class TermScannerTest
         inOrder.verify(termBuffer).getShort(typeOffset(frameOffset));
     }
 
+    private int frameLengthAligned(final int frameLength)
+    {
+        return (int) align(frameLength, FRAME_ALIGNMENT);
+    }
+
     @Test
     public void shouldFailToScanMessageLargerThanMaxLength()
     {
         final int msgLength = 1;
         final int frameLength = HEADER_LENGTH + msgLength;
-        final int alignedFrameLength = align(frameLength, FRAME_ALIGNMENT);
+        final int alignedFrameLength = frameLengthAligned(frameLength);
         final int maxLength = alignedFrameLength - 1;
         final int frameOffset = 0;
 
@@ -94,7 +99,7 @@ public class TermScannerTest
     {
         final int msgLength = 100;
         final int frameLength = HEADER_LENGTH + msgLength;
-        final int alignedFrameLength = align(frameLength, FRAME_ALIGNMENT);
+        final int alignedFrameLength = frameLengthAligned(frameLength);
         int frameOffset = 0;
 
         when(termBuffer.getIntVolatile(frameOffset)).thenReturn(frameLength);
@@ -118,7 +123,7 @@ public class TermScannerTest
     @Test
     public void shouldScanTwoMessagesAndStopAtMtuBoundary()
     {
-        final int frameTwoLength = align(HEADER_LENGTH + 1, FRAME_ALIGNMENT);
+        final int frameTwoLength = frameLengthAligned(HEADER_LENGTH + 1);
         final int frameOneLength = MTU_LENGTH - frameTwoLength;
 
         int frameOffset = 0;
@@ -144,7 +149,7 @@ public class TermScannerTest
     @Test
     public void shouldScanTwoMessagesAndStopAtSecondThatSpansMtu()
     {
-        final int frameTwoLength = align(HEADER_LENGTH * 2, FRAME_ALIGNMENT);
+        final int frameTwoLength = frameLengthAligned(HEADER_LENGTH * 2);
         final int frameOneLength = MTU_LENGTH - (frameTwoLength / 2);
         int frameOffset = 0;
 
@@ -169,7 +174,7 @@ public class TermScannerTest
     @Test
     public void shouldScanLastFrameInBuffer()
     {
-        final int alignedFrameLength = align(HEADER_LENGTH * 2, FRAME_ALIGNMENT);
+        final int alignedFrameLength = frameLengthAligned(HEADER_LENGTH * 2);
         final int frameOffset = TERM_BUFFER_CAPACITY - alignedFrameLength;
 
         when(termBuffer.getIntVolatile(frameOffset)).thenReturn(alignedFrameLength);
@@ -183,8 +188,8 @@ public class TermScannerTest
     @Test
     public void shouldScanLastMessageInBufferPlusPadding()
     {
-        final int alignedFrameLength = align(HEADER_LENGTH * 2, FRAME_ALIGNMENT);
-        final int paddingFrameLength = align(HEADER_LENGTH * 3, FRAME_ALIGNMENT);
+        final int alignedFrameLength = frameLengthAligned(HEADER_LENGTH * 2);
+        final int paddingFrameLength = frameLengthAligned(HEADER_LENGTH * 3);
         final int frameOffset = TERM_BUFFER_CAPACITY - (alignedFrameLength + paddingFrameLength);
 
         when(valueOf(termBuffer.getIntVolatile(frameOffset))).thenReturn(alignedFrameLength);
@@ -200,8 +205,8 @@ public class TermScannerTest
     @Test
     public void shouldScanLastMessageInBufferMinusPaddingLimitedByMtu()
     {
-        final int alignedFrameLength = align(HEADER_LENGTH, FRAME_ALIGNMENT);
-        final int frameOffset = TERM_BUFFER_CAPACITY - align(HEADER_LENGTH * 3, FRAME_ALIGNMENT);
+        final int alignedFrameLength = frameLengthAligned(HEADER_LENGTH);
+        final int frameOffset = TERM_BUFFER_CAPACITY - frameLengthAligned(HEADER_LENGTH * 3);
         final int mtu = alignedFrameLength + 8;
 
         when(valueOf(termBuffer.getIntVolatile(frameOffset))).thenReturn(alignedFrameLength);

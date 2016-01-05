@@ -214,7 +214,7 @@ public class LogBufferDescriptor
      */
     public static void checkMetaDataBuffer(final UnsafeBuffer buffer)
     {
-        final int capacity = buffer.capacity();
+        final long capacity = buffer.capacity();
         if (capacity < TERM_META_DATA_LENGTH)
         {
             final String s = String.format(

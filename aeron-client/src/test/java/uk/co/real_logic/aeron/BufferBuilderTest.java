@@ -55,7 +55,7 @@ public class BufferBuilderTest
     {
         final UnsafeBuffer srcBuffer = new UnsafeBuffer(new byte[INITIAL_CAPACITY]);
 
-        bufferBuilder.append(srcBuffer, 0, srcBuffer.capacity());
+        bufferBuilder.append(srcBuffer, 0, (int) srcBuffer.capacity());
 
         assertThat(bufferBuilder.limit(), is(srcBuffer.capacity()));
 

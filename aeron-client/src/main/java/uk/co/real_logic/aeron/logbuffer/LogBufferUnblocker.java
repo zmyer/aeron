@@ -35,7 +35,7 @@ public class LogBufferUnblocker
     public static boolean unblock(
         final LogBufferPartition[] logPartitions, final UnsafeBuffer logMetaDataBuffer, final long blockedPosition)
     {
-        final int positionBitsToShift = Integer.numberOfTrailingZeros(logPartitions[0].termBuffer().capacity());
+        final int positionBitsToShift = Integer.numberOfTrailingZeros((int) logPartitions[0].termBuffer().capacity());
         final int activeIndex = indexByPosition(blockedPosition, positionBitsToShift);
         final LogBufferPartition activePartition = logPartitions[activeIndex];
         final UnsafeBuffer termBuffer = activePartition.termBuffer();

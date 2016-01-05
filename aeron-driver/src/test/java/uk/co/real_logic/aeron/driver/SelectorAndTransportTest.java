@@ -210,7 +210,7 @@ public class SelectorAndTransportTest
             .streamId(STREAM_ID)
             .termId(TERM_ID);
 
-        encodeDataHeader.wrap(buffer, BitUtil.align(FRAME_LENGTH, FrameDescriptor.FRAME_ALIGNMENT));
+        encodeDataHeader.wrap(buffer, (int) BitUtil.align(FRAME_LENGTH, FrameDescriptor.FRAME_ALIGNMENT));
         encodeDataHeader
             .version(HeaderFlyweight.CURRENT_VERSION)
             .flags(DataHeaderFlyweight.BEGIN_AND_END_FLAGS)
@@ -221,7 +221,7 @@ public class SelectorAndTransportTest
             .streamId(STREAM_ID)
             .termId(TERM_ID);
 
-        byteBuffer.position(0).limit(2 * BitUtil.align(FRAME_LENGTH, FrameDescriptor.FRAME_ALIGNMENT));
+        byteBuffer.position(0).limit((int) (2 * BitUtil.align(FRAME_LENGTH, FrameDescriptor.FRAME_ALIGNMENT)));
 
         processLoop(dataTransportPoller, 5);
         sendChannelEndpoint.sendTo(byteBuffer, srcRemoteAddress);

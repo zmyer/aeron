@@ -36,7 +36,7 @@ public class TermGapScannerTest
     @Before
     public void setUp()
     {
-        when(termBuffer.capacity()).thenReturn(LOG_BUFFER_CAPACITY);
+        when(termBuffer.capacity()).thenReturn((long) LOG_BUFFER_CAPACITY);
     }
 
     @Test

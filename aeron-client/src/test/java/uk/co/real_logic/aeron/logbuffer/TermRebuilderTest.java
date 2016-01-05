@@ -23,7 +23,6 @@ import uk.co.real_logic.agrona.concurrent.UnsafeBuffer;
 
 import java.nio.ByteBuffer;
 
-import static java.lang.Integer.valueOf;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.mockito.Mockito.*;
 import static uk.co.real_logic.aeron.logbuffer.FrameDescriptor.*;
@@ -37,7 +36,7 @@ public class TermRebuilderTest
     @Before
     public void setUp()
     {
-        when(valueOf(termBuffer.capacity())).thenReturn(valueOf(TERM_BUFFER_CAPACITY));
+        when(termBuffer.capacity()).thenReturn((long) TERM_BUFFER_CAPACITY);
     }
 
     @Test
@@ -60,7 +59,7 @@ public class TermRebuilderTest
     @Test
     public void shouldInsertLastFrameIntoBuffer()
     {
-        final int frameLength = BitUtil.align(256, FRAME_ALIGNMENT);
+        final int frameLength = frameLengthAligned(256);
         final int srcOffset = 0;
         final int tail = TERM_BUFFER_CAPACITY - frameLength;
         final int termOffset = tail;
@@ -76,11 +75,16 @@ public class TermRebuilderTest
         verify(termBuffer).putBytes(tail, packet, srcOffset, frameLength);
     }
 
+    private int frameLengthAligned(final int value)
+    {
+        return (int) BitUtil.align(value, FRAME_ALIGNMENT);
+    }
+
     @Test
     public void shouldFillSingleGap()
     {
         final int frameLength = 50;
-        final int alignedFrameLength = BitUtil.align(frameLength, FRAME_ALIGNMENT);
+        final int alignedFrameLength = frameLengthAligned(frameLength);
         final int srcOffset = 0;
         final int tail = alignedFrameLength;
         final int termOffset = tail;
@@ -99,7 +103,7 @@ public class TermRebuilderTest
     public void shouldFillAfterAGap()
     {
         final int frameLength = 50;
-        final int alignedFrameLength = BitUtil.align(frameLength, FRAME_ALIGNMENT);
+        final int alignedFrameLength = frameLengthAligned(frameLength);
         final int srcOffset = 0;
         final UnsafeBuffer packet = new UnsafeBuffer(ByteBuffer.allocateDirect(alignedFrameLength));
         final int termOffset = alignedFrameLength * 2;
@@ -116,7 +120,7 @@ public class TermRebuilderTest
     public void shouldFillGapButNotMoveTailOrHwm()
     {
         final int frameLength = 50;
-        final int alignedFrameLength = BitUtil.align(frameLength, FRAME_ALIGNMENT);
+        final int alignedFrameLength = frameLengthAligned(frameLength);
         final int srcOffset = 0;
         final UnsafeBuffer packet = new UnsafeBuffer(ByteBuffer.allocateDirect(alignedFrameLength));
         final int termOffset = alignedFrameLength * 2;

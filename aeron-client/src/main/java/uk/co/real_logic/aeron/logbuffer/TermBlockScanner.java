@@ -44,7 +44,7 @@ public class TermBlockScanner
                 break;
             }
 
-            final int alignedFrameLength = align(frameLength, FRAME_ALIGNMENT);
+            final int alignedFrameLength = (int) align(frameLength, FRAME_ALIGNMENT);
             offset += alignedFrameLength;
             if (offset >= limit)
             {

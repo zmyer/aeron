@@ -128,7 +128,7 @@ public class NetworkPublication extends NetworkPublicationPadding3 implements
 
         sendBuffers = rawLog.sliceTerms();
 
-        final int termLength = logPartitions[0].termBuffer().capacity();
+        final int termLength = (int) logPartitions[0].termBuffer().capacity();
         termLengthMask = termLength - 1;
         flowControl.initialize(initialTermId, termLength);
 

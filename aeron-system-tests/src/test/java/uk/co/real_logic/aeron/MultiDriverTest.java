@@ -137,7 +137,7 @@ public class MultiDriverTest
 
         for (int i = 0; i < numMessagesToSendPreJoin; i++)
         {
-            while (publication.offer(buffer, 0, buffer.capacity()) < 0L)
+            while (publication.offer(buffer, 0, (int) buffer.capacity()) < 0L)
             {
                 Thread.yield();
             }
@@ -161,7 +161,7 @@ public class MultiDriverTest
 
         for (int i = 0; i < numMessagesToSendPostJoin; i++)
         {
-            while (publication.offer(buffer, 0, buffer.capacity()) < 0L)
+            while (publication.offer(buffer, 0, (int) buffer.capacity()) < 0L)
             {
                 Thread.yield();
             }

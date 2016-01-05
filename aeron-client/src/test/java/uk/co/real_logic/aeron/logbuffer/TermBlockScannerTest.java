@@ -34,14 +34,14 @@ public class TermBlockScannerTest
     @Before
     public void before()
     {
-        when(termBuffer.capacity()).thenReturn(LogBufferDescriptor.TERM_MIN_LENGTH);
+        when(termBuffer.capacity()).thenReturn((long) LogBufferDescriptor.TERM_MIN_LENGTH);
     }
 
     @Test
     public void shouldScanEmptyBuffer()
     {
         final int offset = 0;
-        final int limit = termBuffer.capacity();
+        final int limit = capacity();
 
         final int newOffset = TermBlockScanner.scan(termBuffer, offset, limit);
 
@@ -52,9 +52,9 @@ public class TermBlockScannerTest
     public void shouldReadFirstMessage()
     {
         final int offset = 0;
-        final int limit = termBuffer.capacity();
+        final int limit = capacity();
         final int messageLength = 50;
-        final int alignedMessageLength = BitUtil.align(messageLength, FRAME_ALIGNMENT);
+        final int alignedMessageLength = alignedMessageLength(messageLength);
 
         when(termBuffer.getIntVolatile(lengthOffset(offset))).thenReturn(messageLength);
 
@@ -67,9 +67,9 @@ public class TermBlockScannerTest
     public void shouldReadBlockOfTwoMessages()
     {
         final int offset = 0;
-        final int limit = termBuffer.capacity();
+        final int limit = capacity();
         final int messageLength = 50;
-        final int alignedMessageLength = BitUtil.align(messageLength, FRAME_ALIGNMENT);
+        final int alignedMessageLength = alignedMessageLength(messageLength);
 
         when(termBuffer.getIntVolatile(lengthOffset(offset))).thenReturn(messageLength);
         when(termBuffer.getIntVolatile(lengthOffset(alignedMessageLength))).thenReturn(messageLength);
@@ -83,9 +83,9 @@ public class TermBlockScannerTest
     public void shouldReadBlockOfThreeMessagesThatFillBuffer()
     {
         final int offset = 0;
-        final int limit = termBuffer.capacity();
+        final int limit = capacity();
         final int messageLength = 50;
-        final int alignedMessageLength = BitUtil.align(messageLength, FRAME_ALIGNMENT);
+        final int alignedMessageLength = alignedMessageLength(messageLength);
         final int thirdMessageLength = limit - (alignedMessageLength * 2);
 
         when(termBuffer.getIntVolatile(lengthOffset(offset))).thenReturn(messageLength);
@@ -97,12 +97,17 @@ public class TermBlockScannerTest
         assertThat(newOffset, is(limit));
     }
 
+    private int capacity()
+    {
+        return (int) termBuffer.capacity();
+    }
+
     @Test
     public void shouldReadBlockOfTwoMessagesBecauseOfLimit()
     {
         final int offset = 0;
         final int messageLength = 50;
-        final int alignedMessageLength = BitUtil.align(messageLength, FRAME_ALIGNMENT);
+        final int alignedMessageLength = alignedMessageLength(messageLength);
         final int limit = (alignedMessageLength * 2) + 1;
 
         when(termBuffer.getIntVolatile(lengthOffset(offset))).thenReturn(messageLength);
@@ -119,7 +124,7 @@ public class TermBlockScannerTest
     {
         final int offset = 0;
         final int messageLength = 50;
-        final int alignedMessageLength = BitUtil.align(messageLength, FRAME_ALIGNMENT);
+        final int alignedMessageLength = alignedMessageLength(messageLength);
         final int limit = alignedMessageLength  - 1;
 
         when(termBuffer.getIntVolatile(lengthOffset(offset))).thenReturn(messageLength);
@@ -134,7 +139,7 @@ public class TermBlockScannerTest
     {
         final int offset = 0;
         final int messageLength = 50;
-        final int alignedMessageLength = BitUtil.align(messageLength, FRAME_ALIGNMENT);
+        final int alignedMessageLength = alignedMessageLength(messageLength);
         final int limit = alignedMessageLength;
 
         when(termBuffer.getIntVolatile(lengthOffset(offset))).thenReturn(messageLength);
@@ -142,5 +147,10 @@ public class TermBlockScannerTest
         final int newOffset = TermBlockScanner.scan(termBuffer, offset, limit);
 
         assertThat(newOffset, is(alignedMessageLength));
+    }
+
+    private int alignedMessageLength(final int messageLength)
+    {
+        return (int) BitUtil.align(messageLength, FRAME_ALIGNMENT);
     }
 }

@@ -246,7 +246,7 @@ public class Publication implements AutoCloseable
      */
     public long offer(final DirectBuffer buffer)
     {
-        return offer(buffer, 0, buffer.capacity());
+        return offer(buffer, 0, (int) buffer.capacity());
     }
 
     /**

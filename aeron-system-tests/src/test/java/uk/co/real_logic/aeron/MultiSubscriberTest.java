@@ -88,7 +88,7 @@ public class MultiSubscriberTest
         final ArgumentCaptor<Integer> offsetArg = ArgumentCaptor.forClass(Integer.class);
 
         verify(mockFragmentHandler, times(1)).onFragment(
-            bufferArg.capture(), offsetArg.capture(), eq(srcBuffer.capacity()), any(Header.class));
+            bufferArg.capture(), offsetArg.capture(), eq((int) srcBuffer.capacity()), any(Header.class));
 
         final UnsafeBuffer capturedBuffer = bufferArg.getValue();
         final int offset = offsetArg.getValue();

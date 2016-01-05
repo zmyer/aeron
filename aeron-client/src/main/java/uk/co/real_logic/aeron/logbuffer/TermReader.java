@@ -51,7 +51,7 @@ public class TermReader
         final ErrorHandler errorHandler)
     {
         int fragmentsRead = 0;
-        final int capacity = termBuffer.capacity();
+        final int capacity = (int) termBuffer.capacity();
 
         try
         {

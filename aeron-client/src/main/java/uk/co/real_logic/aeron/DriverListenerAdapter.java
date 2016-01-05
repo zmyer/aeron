@@ -64,13 +64,13 @@ class DriverListenerAdapter implements MessageHandler
         return lastReceivedCorrelationId;
     }
 
-    public void onMessage(final int msgTypeId, final MutableDirectBuffer buffer, final int index, final int length)
+    public void onMessage(final int msgTypeId, final MutableDirectBuffer buffer, final long index, final long length)
     {
         switch (msgTypeId)
         {
             case ON_PUBLICATION_READY:
             {
-                publicationReady.wrap(buffer, index);
+                publicationReady.wrap(buffer, (int) index);
 
                 final long correlationId = publicationReady.correlationId();
 
@@ -91,7 +91,7 @@ class DriverListenerAdapter implements MessageHandler
 
             case ON_AVAILABLE_IMAGE:
             {
-                imageReady.wrap(buffer, index);
+                imageReady.wrap(buffer, (int) index);
 
                 for (int i = 0, max = imageReady.subscriberPositionCount(); i < max; i++)
                 {
@@ -115,7 +115,7 @@ class DriverListenerAdapter implements MessageHandler
 
             case ON_OPERATION_SUCCESS:
             {
-                correlatedMessage.wrap(buffer, index);
+                correlatedMessage.wrap(buffer, (int) index);
 
                 final long correlationId = correlatedMessage.correlationId();
                 if (correlationId == activeCorrelationId)
@@ -127,7 +127,7 @@ class DriverListenerAdapter implements MessageHandler
 
             case ON_UNAVAILABLE_IMAGE:
             {
-                imageMessage.wrap(buffer, index);
+                imageMessage.wrap(buffer, (int) index);
 
                 listener.onUnavailableImage(
                     imageMessage.streamId(),
@@ -137,7 +137,7 @@ class DriverListenerAdapter implements MessageHandler
 
             case ON_ERROR:
             {
-                errorResponse.wrap(buffer, index);
+                errorResponse.wrap(buffer, (int) index);
                 final long correlationId = errorResponse.offendingCommandCorrelationId();
 
                 if (correlationId == activeCorrelationId)

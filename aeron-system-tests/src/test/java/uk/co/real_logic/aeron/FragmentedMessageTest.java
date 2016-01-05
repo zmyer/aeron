@@ -72,14 +72,14 @@ public class FragmentedMessageTest
         {
             final UnsafeBuffer srcBuffer = new UnsafeBuffer(new byte[ctx.mtuLength() * 4]);
             final int offset = 0;
-            final int length = srcBuffer.capacity() / 4;
+            final int length = (int) (srcBuffer.capacity() / 4);
 
             for (int i = 0; i < 4; i++)
             {
                 srcBuffer.setMemory(i * length, length, (byte)(65 + i));
             }
 
-            while (publication.offer(srcBuffer, offset, srcBuffer.capacity()) < 0L)
+            while (publication.offer(srcBuffer, offset, (int) srcBuffer.capacity()) < 0L)
             {
                 Thread.yield();
             }
@@ -96,7 +96,7 @@ public class FragmentedMessageTest
             final ArgumentCaptor<Header> headerArg = ArgumentCaptor.forClass(Header.class);
 
             verify(mockFragmentHandler, times(1)).onFragment(
-                bufferArg.capture(), eq(offset), eq(srcBuffer.capacity()), headerArg.capture());
+                bufferArg.capture(), eq(offset), eq((int) srcBuffer.capacity()), headerArg.capture());
 
             final UnsafeBuffer capturedBuffer = bufferArg.getValue();
             for (int i = 0; i < srcBuffer.capacity(); i++)

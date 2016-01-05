@@ -70,7 +70,7 @@ public class FragmentAssemblerTest
 
         final UnsafeBuffer srcBuffer = new UnsafeBuffer(new byte[1024]);
         final int offset = 0;
-        final int length = srcBuffer.capacity() / 2;
+        final int length = halfCapacity(srcBuffer);
 
         srcBuffer.setMemory(0, length, (byte)65);
         srcBuffer.setMemory(length, length, (byte)66);
@@ -106,7 +106,7 @@ public class FragmentAssemblerTest
 
         final UnsafeBuffer srcBuffer = new UnsafeBuffer(new byte[1024]);
         final int offset = 0;
-        final int length = srcBuffer.capacity() / 4;
+        final int length = (int) (srcBuffer.capacity() / 4);
 
         for (int i = 0; i < 4; i++)
         {
@@ -144,7 +144,7 @@ public class FragmentAssemblerTest
 
         final UnsafeBuffer srcBuffer = new UnsafeBuffer(new byte[1024]);
         final int offset = 0;
-        final int length = srcBuffer.capacity() / 2;
+        final int length = halfCapacity(srcBuffer);
 
         srcBuffer.setMemory(0, length, (byte)65);
         srcBuffer.setMemory(length, length, (byte)66);
@@ -164,7 +164,7 @@ public class FragmentAssemblerTest
         when(header.flags()).thenReturn(FrameDescriptor.END_FRAG_FLAG);
         final UnsafeBuffer srcBuffer = new UnsafeBuffer(new byte[1024]);
         final int offset = 0;
-        final int length = srcBuffer.capacity() / 2;
+        final int length = halfCapacity(srcBuffer);
 
         adapter.onFragment(srcBuffer, offset, length, header);
 
@@ -180,11 +180,16 @@ public class FragmentAssemblerTest
 
         final UnsafeBuffer srcBuffer = new UnsafeBuffer(new byte[1024]);
         final int offset = 0;
-        final int length = srcBuffer.capacity() / 2;
+        final int length = halfCapacity(srcBuffer);
 
         adapter.onFragment(srcBuffer, offset, length, header);
         adapter.onFragment(srcBuffer, offset, length, header);
 
         verify(delegateFragmentHandler, never()).onFragment(anyObject(), anyInt(), anyInt(), anyObject());
+    }
+
+    private int halfCapacity(final UnsafeBuffer srcBuffer)
+    {
+        return (int) (srcBuffer.capacity() / 2);
     }
 }

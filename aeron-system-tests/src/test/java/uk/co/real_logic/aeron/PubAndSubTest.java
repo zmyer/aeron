@@ -172,7 +172,7 @@ public class PubAndSubTest
 
         final long expectedOffset = 0L;
         final int messageSize = SIZE_OF_INT;
-        final int expectedLength = BitUtil.align(HEADER_LENGTH + messageSize, FRAME_ALIGNMENT);
+        final int expectedLength = (int) BitUtil.align(HEADER_LENGTH + messageSize, FRAME_ALIGNMENT);
 
         final ArgumentCaptor<FileChannel> channelArgumentCaptor = ArgumentCaptor.forClass(FileChannel.class);
         verify(fileBlockHandler).onBlock(

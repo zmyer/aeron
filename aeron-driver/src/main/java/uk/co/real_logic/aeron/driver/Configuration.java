@@ -181,7 +181,8 @@ public class Configuration
     /**
      * Default buffer length for broadcast buffers from the media driver to the clients
      */
-    public static final int TO_CLIENTS_BUFFER_LENGTH_DEFAULT = 1024 * 1024 + BroadcastBufferDescriptor.TRAILER_LENGTH;
+    public static final int TO_CLIENTS_BUFFER_LENGTH_DEFAULT =
+        1024 * 1024 + (int) BroadcastBufferDescriptor.TRAILER_LENGTH;
     public static final int TO_CLIENTS_BUFFER_LENGTH = getInteger(
         TO_CLIENTS_BUFFER_LENGTH_PROP_NAME, TO_CLIENTS_BUFFER_LENGTH_DEFAULT);
 
