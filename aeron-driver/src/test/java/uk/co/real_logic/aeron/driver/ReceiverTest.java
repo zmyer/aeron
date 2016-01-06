@@ -24,7 +24,10 @@ import uk.co.real_logic.aeron.driver.buffer.RawLogPartition;
 import uk.co.real_logic.aeron.driver.cmd.CreatePublicationImageCmd;
 import uk.co.real_logic.aeron.driver.cmd.DriverConductorCmd;
 import uk.co.real_logic.aeron.driver.event.EventLogger;
-import uk.co.real_logic.aeron.driver.media.*;
+import uk.co.real_logic.aeron.driver.media.ControlTransportPoller;
+import uk.co.real_logic.aeron.driver.media.DataTransportPoller;
+import uk.co.real_logic.aeron.driver.media.ReceiveChannelEndpoint;
+import uk.co.real_logic.aeron.driver.media.UdpChannel;
 import uk.co.real_logic.aeron.logbuffer.FrameDescriptor;
 import uk.co.real_logic.aeron.logbuffer.Header;
 import uk.co.real_logic.aeron.logbuffer.TermReader;
@@ -200,7 +203,7 @@ public class ReceiverTest
         final int messagesRead = toConductorQueue.drain(
             (e) ->
             {
-                final CreatePublicationImageCmd cmd = (CreatePublicationImageCmd)e;
+                final CreatePublicationImageCmd cmd = (CreatePublicationImageCmd) e;
 
                 assertThat(cmd.channelEndpoint().udpChannel(), is(UDP_CHANNEL));
                 assertThat(cmd.streamId(), is(STREAM_ID));
@@ -223,7 +226,7 @@ public class ReceiverTest
 
         do
         {
-            rcvAddress = (InetSocketAddress)senderChannel.receive(rcvBuffer);
+            rcvAddress = (InetSocketAddress) senderChannel.receive(rcvBuffer);
         }
         while (null == rcvAddress);
 
@@ -439,9 +442,9 @@ public class ReceiverTest
     @Test
     public void shouldHandleNonZeroTermOffsetCorrectly() throws Exception
     {
-        final int initialTermOffset = (int) align(TERM_BUFFER_LENGTH / 16, FrameDescriptor.FRAME_ALIGNMENT);
+        final int initialTermOffset = align(TERM_BUFFER_LENGTH / 16, FrameDescriptor.FRAME_ALIGNMENT);
         final int alignedDataFrameLength =
-            (int) align(DataHeaderFlyweight.HEADER_LENGTH + FAKE_PAYLOAD.length, FrameDescriptor.FRAME_ALIGNMENT);
+            align(DataHeaderFlyweight.HEADER_LENGTH + FAKE_PAYLOAD.length, FrameDescriptor.FRAME_ALIGNMENT);
 
         receiverProxy.registerReceiveChannelEndpoint(receiveChannelEndpoint);
         receiverProxy.addSubscription(receiveChannelEndpoint, STREAM_ID);
@@ -589,7 +592,7 @@ public class ReceiverTest
             .termOffset(termOffset)
             .frameLength(SetupFlyweight.HEADER_LENGTH)
             .headerType(HeaderFlyweight.HDR_TYPE_SETUP)
-            .flags((byte)0)
+            .flags((byte) 0)
             .version(HeaderFlyweight.CURRENT_VERSION);
     }
 }

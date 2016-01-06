@@ -70,7 +70,7 @@ public class TermScannerTest
 
     private int frameLengthAligned(final int frameLength)
     {
-        return (int) align(frameLength, FRAME_ALIGNMENT);
+        return align(frameLength, FRAME_ALIGNMENT);
     }
 
     @Test

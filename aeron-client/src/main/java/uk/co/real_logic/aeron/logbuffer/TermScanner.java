@@ -53,7 +53,7 @@ public final class TermScanner
                 break;
             }
 
-            int alignedFrameLength = (int) align(frameLength, FRAME_ALIGNMENT);
+            int alignedFrameLength = align(frameLength, FRAME_ALIGNMENT);
             if (isPaddingFrame(termBuffer, termOffset))
             {
                 padding = alignedFrameLength - HEADER_LENGTH;

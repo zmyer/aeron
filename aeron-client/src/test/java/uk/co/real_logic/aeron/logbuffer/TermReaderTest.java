@@ -114,7 +114,7 @@ public class TermReaderTest
     {
         final int msgLength = 1;
         final int frameLength = HEADER_LENGTH + msgLength;
-        final int alignedFrameLength = (int) align(frameLength, FRAME_ALIGNMENT);
+        final int alignedFrameLength = align(frameLength, FRAME_ALIGNMENT);
         final int termOffset = 0;
 
         when(termBuffer.getIntVolatile(0)).thenReturn(frameLength);
@@ -140,7 +140,7 @@ public class TermReaderTest
     {
         final int msgLength = 1;
         final int frameLength = HEADER_LENGTH + msgLength;
-        final int alignedFrameLength = (int) align(frameLength, FRAME_ALIGNMENT);
+        final int alignedFrameLength = align(frameLength, FRAME_ALIGNMENT);
         final int frameOffset = TERM_BUFFER_CAPACITY - alignedFrameLength;
 
         when(termBuffer.getIntVolatile(frameOffset)).thenReturn(frameLength);
@@ -160,7 +160,7 @@ public class TermReaderTest
     {
         final int msgLength = 1;
         final int frameLength = HEADER_LENGTH + msgLength;
-        final int alignedFrameLength = (int) align(frameLength, FRAME_ALIGNMENT);
+        final int alignedFrameLength = align(frameLength, FRAME_ALIGNMENT);
         final int frameOffset = TERM_BUFFER_CAPACITY - alignedFrameLength;
 
         when(termBuffer.getIntVolatile(frameOffset)).thenReturn(frameLength);

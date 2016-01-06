@@ -132,7 +132,7 @@ public class TermAppender
     public long claim(final HeaderWriter header, final int length, final BufferClaim bufferClaim)
     {
         final int frameLength = length + HEADER_LENGTH;
-        final int alignedLength = (int) align(frameLength, FRAME_ALIGNMENT);
+        final int alignedLength = align(frameLength, FRAME_ALIGNMENT);
         final long rawTail = getAndAddRawTail(alignedLength);
         final long termOffset = rawTail & 0xFFFF_FFFFL;
 
@@ -168,7 +168,7 @@ public class TermAppender
         final HeaderWriter header, final DirectBuffer srcBuffer, final int srcOffset, final int length)
     {
         final int frameLength = length + HEADER_LENGTH;
-        final int alignedLength = (int) align(frameLength, FRAME_ALIGNMENT);
+        final int alignedLength = align(frameLength, FRAME_ALIGNMENT);
         final long rawTail = getAndAddRawTail(alignedLength);
         final long termOffset = rawTail & 0xFFFF_FFFFL;
 
@@ -213,7 +213,7 @@ public class TermAppender
         final int numMaxPayloads = length / maxPayloadLength;
         final int remainingPayload = length % maxPayloadLength;
         final int lastFrameLength = remainingPayload > 0
-                                  ? (int) align(remainingPayload + HEADER_LENGTH, FRAME_ALIGNMENT)
+                                  ? align(remainingPayload + HEADER_LENGTH, FRAME_ALIGNMENT)
                                   : 0;
         final int requiredLength = (numMaxPayloads * (maxPayloadLength + HEADER_LENGTH)) + lastFrameLength;
         final long rawTail = getAndAddRawTail(requiredLength);
@@ -237,7 +237,7 @@ public class TermAppender
             {
                 final int bytesToWrite = Math.min(remaining, maxPayloadLength);
                 final int frameLength = bytesToWrite + HEADER_LENGTH;
-                final int alignedLength = (int) align(frameLength, FRAME_ALIGNMENT);
+                final int alignedLength = align(frameLength, FRAME_ALIGNMENT);
 
                 header.write(termBuffer, offset, frameLength, termId);
                 termBuffer.putBytes(
