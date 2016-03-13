@@ -77,7 +77,7 @@ public:
     std::int32_t recv(char* data, const int32_t len);
     void setTimeout(timeval timeout);
     InetAddress* receive(int32_t* pInt);
-    bool isMulticast();
+    virtual bool isMulticast();
     UdpChannel& udpChannel();
 
 protected:

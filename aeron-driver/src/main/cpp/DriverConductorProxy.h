@@ -31,6 +31,8 @@ class DriverConductorProxy
 public:
     DriverConductorProxy() {}
 
+    virtual ~DriverConductorProxy() = default;
+
     virtual void createPublicationImage(
         std::int32_t sessionId,
         std::int32_t streamId,

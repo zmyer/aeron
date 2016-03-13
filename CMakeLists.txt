@@ -98,6 +98,29 @@ set(
 )
 
 ##########################################################
+# FakeIt
+
+ExternalProject_Add(
+    FakeIt
+    URL ${CMAKE_CURRENT_SOURCE_DIR}/cppbuild/FakeIt-2.0.2.tar.gz
+    URL_MD5 ce0ac92f080dc99d3af2110f996bcd0f
+    PREFIX ${CMAKE_BINARY_DIR}/FakeIt
+    INSTALL_COMMAND ""
+    BUILD_COMMAND ""
+    CONFIGURE_COMMAND ""
+)
+
+ExternalProject_Get_Property(FakeIt source_dir)
+set(FAKEIT_SOURCE_DIR ${source_dir})
+#ExternalProject_Get_Property(FakeIt binary_dir)
+#set(GOOGLE_BENCHMARK_BINARY_DIR ${binary_dir})
+#
+#set(
+#    GOOGLE_BENCHMARK_LIBS
+#    ${GOOGLE_BENCHMARK_BINARY_DIR}/src/${CMAKE_STATIC_LIBRARY_PREFIX}benchmark${CMAKE_STATIC_LIBRARY_SUFFIX}
+#)
+
+##########################################################
 # Platform flags, etc.
 
 find_package(Threads)
@@ -119,6 +142,7 @@ if(APPLE)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wsign-compare")
     add_definitions(-DDarwin)
     add_definitions(-Wno-deprecated-register)
+    add_definitions(-Wno-inconsistent-missing-override)
 elseif(CYGWIN)
     add_definitions(-DWIN32)
     add_definitions(-DGTEST_HAS_PTHREAD)
@@ -156,6 +180,9 @@ include_directories(${HDRHISTOGRAM_SOURCE_DIR}/src)
 
 # google benchmark
 include_directories(${GOOGLE_BENCHMARK_SOURCE_DIR}/include)
+
+include_directories(${FAKEIT_SOURCE_DIR}/config/gtest)
+include_directories(${FAKEIT_SOURCE_DIR}/include)
 
 include_directories(${AERON_CLIENT_TEST_PATH})
 

@@ -13,10 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+include_directories(${CMAKE_SOURCE_DIR}/FakeIt-2.0.2/include)
+include_directories(${CMAKE_SOURCE_DIR}/FakeIt-2.0.2/config/gtest)
+
 function(aeron_driver_test name file)
     add_executable(${name} ${file})
     target_link_libraries(${name} aeron_client aeron_driver aeron_client_test ${GMOCK_LIBS} ${CMAKE_THREAD_LIBS_INIT})
-    add_dependencies(${name} gmock)
+    add_dependencies(${name} gmock FakeIt)
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
@@ -29,6 +32,7 @@ aeron_driver_test(interfaceSearchAddressTest media/InterfaceSearchAddressTest.cp
 aeron_driver_test(udpChannelTransportTest media/UdpChannelTransportTest.cpp)
 aeron_driver_test(channelEndpointTest media/ChannelEndpointTest.cpp)
 aeron_driver_test(dataPacketDispatcherTest DataPacketDispatcherTest.cpp)
+aeron_driver_test(dataPacketDispatcherTest2 DataPacketDispatcherTest2.cpp)
 
 function(aeron_driver_benchmark name file)
     add_executable(${name} ${file})
