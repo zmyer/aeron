@@ -18,6 +18,7 @@ package io.aeron.archive;
 import io.aeron.Counter;
 import io.aeron.Image;
 import io.aeron.Subscription;
+import io.aeron.archive.client.AeronArchive;
 import io.aeron.logbuffer.BlockHandler;
 import io.aeron.logbuffer.FrameDescriptor;
 import io.aeron.logbuffer.LogBufferDescriptor;
@@ -162,11 +163,11 @@ public class RecordingSessionTest
             recordingSummary,
             archiveDir,
             NULL_POSITION,
-            RecordingFragmentReader.NULL_LENGTH,
+            AeronArchive.NULL_LENGTH,
             null))
         {
-            final int polled = reader.controlledPoll(
-                (buffer, offset, length) ->
+            final int fragments = reader.controlledPoll(
+                (buffer, offset, length, frameType, flags, reservedValue) ->
                 {
                     final int frameOffset = offset - DataHeaderFlyweight.HEADER_LENGTH;
                     assertEquals(TERM_OFFSET, frameOffset);
@@ -176,7 +177,7 @@ public class RecordingSessionTest
                 },
                 1);
 
-            assertEquals(1, polled);
+            assertEquals(1, fragments);
         }
 
         when(image.blockPoll(any(), anyInt())).thenReturn(0);

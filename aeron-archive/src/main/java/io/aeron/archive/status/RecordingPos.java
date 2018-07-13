@@ -17,6 +17,7 @@ package io.aeron.archive.status;
 
 import io.aeron.Aeron;
 import io.aeron.Counter;
+import io.aeron.Image;
 import org.agrona.DirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.status.CountersReader;
@@ -36,15 +37,11 @@ import static org.agrona.concurrent.status.CountersReader.*;
  *  |                        Recording ID                           |
  *  |                                                               |
  *  +---------------------------------------------------------------+
- *  |                     Control Session ID                        |
- *  |                                                               |
- *  +---------------------------------------------------------------+
- *  |                       Correlation ID                          |
- *  |                                                               |
- *  +---------------------------------------------------------------+
  *  |                         Session ID                            |
  *  +---------------------------------------------------------------+
- *  |                         Stream ID                             |
+ *  |                Source Identity for the Image                  |
+ *  |                                                              ...
+ * ...                                                              |
  *  +---------------------------------------------------------------+
  * </pre>
  */
@@ -58,7 +55,7 @@ public class RecordingPos
     /**
      * Represents a null recording id when not found.
      */
-    public static final long NULL_RECORDING_ID = -1L;
+    public static final long NULL_RECORDING_ID = Aeron.NULL_VALUE;
 
     /**
      * Human readable name for the counter.
@@ -66,47 +63,39 @@ public class RecordingPos
     public static final String NAME = "rec-pos";
 
     public static final int RECORDING_ID_OFFSET = 0;
-    public static final int CONTROL_SESSION_ID_OFFSET = RECORDING_ID_OFFSET + SIZE_OF_LONG;
-    public static final int CORRELATION_ID_OFFSET = CONTROL_SESSION_ID_OFFSET + SIZE_OF_LONG;
-    public static final int SESSION_ID_OFFSET = CORRELATION_ID_OFFSET + SIZE_OF_LONG;
-    public static final int STREAM_ID_OFFSET = SESSION_ID_OFFSET + SIZE_OF_INT;
-    public static final int KEY_LENGTH = STREAM_ID_OFFSET + SIZE_OF_INT;
+    public static final int SESSION_ID_OFFSET = RECORDING_ID_OFFSET + SIZE_OF_LONG;
+    public static final int SOURCE_IDENTITY_LENGTH_OFFSET = SESSION_ID_OFFSET + SIZE_OF_INT;
+    public static final int SOURCE_IDENTITY_OFFSET = SOURCE_IDENTITY_LENGTH_OFFSET + SIZE_OF_INT;
 
     public static Counter allocate(
         final Aeron aeron,
         final UnsafeBuffer tempBuffer,
         final long recordingId,
-        final long controlSessionId,
-        final long correlationId,
         final int sessionId,
         final int streamId,
-        final String strippedChannel)
+        final String strippedChannel,
+        final String sourceIdentity)
     {
         tempBuffer.putLong(RECORDING_ID_OFFSET, recordingId);
-        tempBuffer.putLong(CONTROL_SESSION_ID_OFFSET, controlSessionId);
-        tempBuffer.putLong(CORRELATION_ID_OFFSET, correlationId);
         tempBuffer.putInt(SESSION_ID_OFFSET, sessionId);
-        tempBuffer.putInt(STREAM_ID_OFFSET, streamId);
+
+        final int sourceIdentityLength = Math.min(sourceIdentity.length(), MAX_KEY_LENGTH - SOURCE_IDENTITY_OFFSET);
+        tempBuffer.putStringAscii(SOURCE_IDENTITY_LENGTH_OFFSET, sourceIdentity);
+        final int keyLength = SOURCE_IDENTITY_OFFSET + sourceIdentityLength;
 
         int labelLength = 0;
-        labelLength += tempBuffer.putStringWithoutLengthAscii(KEY_LENGTH, NAME + ": ");
-        labelLength += tempBuffer.putLongAscii(KEY_LENGTH + labelLength, recordingId);
-        labelLength += tempBuffer.putStringWithoutLengthAscii(KEY_LENGTH + labelLength, " ");
-        labelLength += tempBuffer.putIntAscii(KEY_LENGTH + labelLength, sessionId);
-        labelLength += tempBuffer.putStringWithoutLengthAscii(KEY_LENGTH + labelLength, " ");
-        labelLength += tempBuffer.putIntAscii(KEY_LENGTH + labelLength, streamId);
-        labelLength += tempBuffer.putStringWithoutLengthAscii(KEY_LENGTH + labelLength, " ");
+        labelLength += tempBuffer.putStringWithoutLengthAscii(keyLength, NAME + ": ");
+        labelLength += tempBuffer.putLongAscii(keyLength + labelLength, recordingId);
+        labelLength += tempBuffer.putStringWithoutLengthAscii(keyLength + labelLength, " ");
+        labelLength += tempBuffer.putIntAscii(keyLength + labelLength, sessionId);
+        labelLength += tempBuffer.putStringWithoutLengthAscii(keyLength + labelLength, " ");
+        labelLength += tempBuffer.putIntAscii(keyLength + labelLength, streamId);
+        labelLength += tempBuffer.putStringWithoutLengthAscii(keyLength + labelLength, " ");
         labelLength += tempBuffer.putStringWithoutLengthAscii(
-            KEY_LENGTH + labelLength, strippedChannel, 0, MAX_LABEL_LENGTH - labelLength);
+            keyLength + labelLength, strippedChannel, 0, MAX_LABEL_LENGTH - labelLength);
 
         return aeron.addCounter(
-            RECORDING_POSITION_TYPE_ID,
-            tempBuffer,
-            0,
-            KEY_LENGTH,
-            tempBuffer,
-            KEY_LENGTH,
-            labelLength);
+            RECORDING_POSITION_TYPE_ID, tempBuffer, 0, keyLength, tempBuffer, keyLength, labelLength);
     }
 
     /**
@@ -135,36 +124,6 @@ public class RecordingPos
         }
 
         return NULL_COUNTER_ID;
-    }
-
-    /**
-     * Count the number of counters for a given session. It is possible for different recording to exist on the
-     * same session if there are images under subscriptions with different channel and stream id.
-     *
-     * @param countersReader to search within.
-     * @param sessionId      to search for.
-     * @return the count of recordings matching a session id.
-     */
-    public static int countBySession(final CountersReader countersReader, final int sessionId)
-    {
-        int count = 0;
-        final DirectBuffer buffer = countersReader.metaDataBuffer();
-
-        for (int i = 0, size = countersReader.maxCounterId(); i < size; i++)
-        {
-            if (countersReader.getCounterState(i) == RECORD_ALLOCATED)
-            {
-                final int recordOffset = CountersReader.metaDataOffset(i);
-
-                if (buffer.getInt(recordOffset + TYPE_ID_OFFSET) == RECORDING_POSITION_TYPE_ID &&
-                    buffer.getInt(recordOffset + KEY_OFFSET + SESSION_ID_OFFSET) == sessionId)
-                {
-                    ++count;
-                }
-            }
-        }
-
-        return count;
     }
 
     /**
@@ -217,6 +176,30 @@ public class RecordingPos
         }
 
         return NULL_RECORDING_ID;
+    }
+
+    /**
+     * Get the {@link Image#sourceIdentity()} for the recording.
+     *
+     * @param countersReader to search within.
+     * @param counterId      for the active recording.
+     * @return {@link Image#sourceIdentity()} for the recording or null if not found.
+     */
+    public static String getSourceIdentity(final CountersReader countersReader, final int counterId)
+    {
+        final DirectBuffer buffer = countersReader.metaDataBuffer();
+
+        if (countersReader.getCounterState(counterId) == RECORD_ALLOCATED)
+        {
+            final int recordOffset = CountersReader.metaDataOffset(counterId);
+
+            if (buffer.getInt(recordOffset + TYPE_ID_OFFSET) == RECORDING_POSITION_TYPE_ID)
+            {
+                return buffer.getStringAscii(recordOffset + KEY_OFFSET + SOURCE_IDENTITY_LENGTH_OFFSET);
+            }
+        }
+
+        return null;
     }
 
     /**

@@ -23,9 +23,10 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.PortUnreachableException;
 import java.nio.ByteBuffer;
-import java.nio.channels.ClosedChannelException;
 import java.nio.channels.DatagramChannel;
 import java.util.ArrayList;
+
+import static io.aeron.driver.media.UdpChannelTransport.sendError;
 
 abstract class MultiDestination
 {
@@ -40,7 +41,8 @@ abstract class MultiDestination
 
     abstract void removeDestination(InetSocketAddress address);
 
-    static int send(final DatagramChannel datagramChannel,
+    static int send(
+        final DatagramChannel datagramChannel,
         final ByteBuffer buffer,
         final SendChannelEndpoint channelEndpoint,
         final int bytesToSend,
@@ -50,18 +52,20 @@ abstract class MultiDestination
         int bytesSent = 0;
         try
         {
-            channelEndpoint.presend(buffer, destination);
+            channelEndpoint.sendHook(buffer, destination);
 
             buffer.position(position);
-            bytesSent = datagramChannel.send(buffer, destination);
+            if (datagramChannel.isOpen())
+            {
+                bytesSent = datagramChannel.send(buffer, destination);
+            }
         }
-        catch (final PortUnreachableException | ClosedChannelException ignore)
+        catch (final PortUnreachableException ignore)
         {
         }
         catch (final IOException ex)
         {
-            throw new RuntimeException(
-                "Failed to send packet of " + bytesToSend + " bytes to " + destination, ex);
+            sendError(bytesToSend, ex, destination);
         }
 
         return bytesSent;

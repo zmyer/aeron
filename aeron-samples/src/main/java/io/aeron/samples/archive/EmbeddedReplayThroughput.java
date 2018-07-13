@@ -20,6 +20,7 @@ import io.aeron.archive.Archive;
 import io.aeron.archive.ArchivingMediaDriver;
 import io.aeron.archive.client.AeronArchive;
 import io.aeron.archive.client.RecordingDescriptorConsumer;
+import io.aeron.archive.status.RecordingPos;
 import io.aeron.driver.MediaDriver;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.Header;
@@ -28,6 +29,7 @@ import org.agrona.CloseHelper;
 import org.agrona.DirectBuffer;
 import org.agrona.collections.MutableLong;
 import org.agrona.concurrent.UnsafeBuffer;
+import org.agrona.concurrent.status.CountersReader;
 import org.agrona.console.ContinueBarrier;
 
 import java.io.File;
@@ -87,7 +89,7 @@ public class EmbeddedReplayThroughput implements AutoCloseable
 
                 System.out.println("Performance inclusive of replay request and connection setup:");
                 System.out.printf(
-                    "Replayed %.02f MB @ %.02f MB/s - %,d msg/sec - %d byte message + 32 byte header%n",
+                    "Replayed %.02f MB @ %.02f MB/s - %,d msg/sec - %d byte payload + 32 byte header%n",
                     recordingMb, dataRate, msgRate, MESSAGE_LENGTH);
             }
             while (barrier.await());
@@ -170,12 +172,25 @@ public class EmbeddedReplayThroughput implements AutoCloseable
                     image.poll(NOOP_FRAGMENT_HANDLER, 10);
                 }
 
+                awaitRecordingComplete(position);
+
                 return position;
             }
             finally
             {
                 aeronArchive.stopRecording(publication);
             }
+        }
+    }
+
+    private void awaitRecordingComplete(final long position)
+    {
+        final CountersReader counters = aeron.countersReader();
+        final int counterId = RecordingPos.findCounterIdBySession(counters, publicationSessionId);
+
+        while (counters.getCounterValue(counterId) < position)
+        {
+            Thread.yield();
         }
     }
 

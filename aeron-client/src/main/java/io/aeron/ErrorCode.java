@@ -15,6 +15,8 @@
  */
 package io.aeron;
 
+import io.aeron.exceptions.AeronException;
+
 /**
  * Error codes between media driver and client and the on-wire protocol.
  */
@@ -48,7 +50,38 @@ public enum ErrorCode
     /**
      * Attempted to remove a counter, but it was not found.
      */
-    UNKNOWN_COUNTER(5);
+    UNKNOWN_COUNTER(5),
+
+    // *** Insert new codes above here.
+
+    /**
+     * A code value returned was not known.
+     */
+    UNKNOWN_CODE_VALUE(-1);
+
+    static final ErrorCode[] ERROR_CODES;
+
+    static
+    {
+        final ErrorCode[] errorCodes = values();
+        ERROR_CODES = new ErrorCode[errorCodes.length];
+        for (final ErrorCode errorCode : errorCodes)
+        {
+            final int value = errorCode.value();
+
+            if (value == UNKNOWN_CODE_VALUE.value())
+            {
+                continue;
+            }
+
+            if (null != ERROR_CODES[value])
+            {
+                throw new AeronException("value already in use: " + value);
+            }
+
+            ERROR_CODES[value] = errorCode;
+        }
+    }
 
     private final int value;
 
@@ -70,21 +103,16 @@ public enum ErrorCode
     /**
      * Get the ErrorCode that corresponds to the given value.
      *
-     * @param value Of the ErrorCode
+     * @param value of the ErrorCode
      * @return ErrorCode
      */
     public static ErrorCode get(final int value)
     {
-        if (value > Singleton.VALUES.length)
+        if (value >= 0 && value < (ERROR_CODES.length - 2))
         {
-            throw new IllegalArgumentException("No ErrorCode for value: " + value);
+            return ERROR_CODES[value];
         }
 
-        return Singleton.VALUES[value];
-    }
-
-    static class Singleton
-    {
-        public static final ErrorCode[] VALUES = ErrorCode.values();
+        return UNKNOWN_CODE_VALUE;
     }
 }

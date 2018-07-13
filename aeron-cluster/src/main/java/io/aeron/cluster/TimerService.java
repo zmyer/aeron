@@ -25,19 +25,29 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 class TimerService implements DeadlineTimerWheel.TimerHandler
 {
-    private final SequencerAgent sequencerAgent;
+    private final ConsensusModuleAgent consensusModuleAgent;
     private final DeadlineTimerWheel timerWheel = new DeadlineTimerWheel(MILLISECONDS, 0, 1, 128);
     private Long2LongHashMap timerIdByCorrelationIdMap = new Long2LongHashMap(Long.MAX_VALUE);
     private Long2LongHashMap correlationIdByTimerIdMap = new Long2LongHashMap(Long.MAX_VALUE);
 
-    TimerService(final SequencerAgent sequencerAgent)
+    TimerService(final ConsensusModuleAgent consensusModuleAgent)
     {
-        this.sequencerAgent = sequencerAgent;
+        this.consensusModuleAgent = consensusModuleAgent;
     }
 
-    public int poll(final long nowMs)
+    int poll(final long nowMs)
     {
         return timerWheel.poll(nowMs, this, TIMER_POLL_LIMIT);
+    }
+
+    long timerCount()
+    {
+        return timerWheel.timerCount();
+    }
+
+    long currentTickTimeMs()
+    {
+        return timerWheel.currentTickTime();
     }
 
     public boolean onTimerExpiry(final TimeUnit timeUnit, final long now, final long timerId)
@@ -45,10 +55,10 @@ class TimerService implements DeadlineTimerWheel.TimerHandler
         final long correlationId = correlationIdByTimerIdMap.remove(timerId);
         timerIdByCorrelationIdMap.remove(correlationId);
 
-        return sequencerAgent.onTimerEvent(correlationId, now);
+        return consensusModuleAgent.onTimerEvent(correlationId, now);
     }
 
-    public void scheduleTimer(final long correlationId, final long deadlineMs)
+    void scheduleTimer(final long correlationId, final long deadlineMs)
     {
         cancelTimer(correlationId);
 
@@ -57,7 +67,7 @@ class TimerService implements DeadlineTimerWheel.TimerHandler
         correlationIdByTimerIdMap.put(timerId, correlationId);
     }
 
-    public boolean cancelTimer(final long correlationId)
+    boolean cancelTimer(final long correlationId)
     {
         final long timerId = timerIdByCorrelationIdMap.remove(correlationId);
         if (Long.MAX_VALUE != timerId)
@@ -71,7 +81,7 @@ class TimerService implements DeadlineTimerWheel.TimerHandler
         return false;
     }
 
-    public void snapshot(final ConsensusModuleSnapshotTaker snapshotTaker)
+    void snapshot(final ConsensusModuleSnapshotTaker snapshotTaker)
     {
         final Long2LongHashMap.EntryIterator iter =
             (Long2LongHashMap.EntryIterator)timerIdByCorrelationIdMap.entrySet().iterator();

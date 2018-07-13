@@ -16,9 +16,8 @@
 package io.aeron.cluster;
 
 import io.aeron.ChannelUri;
-import io.aeron.ChannelUriStringBuilder;
-import io.aeron.CommonContext;
 import io.aeron.Publication;
+import io.aeron.cluster.service.ClientSession;
 import io.aeron.cluster.service.ClusteredService;
 import org.agrona.IoUtil;
 import org.agrona.collections.Long2LongHashMap;
@@ -38,9 +37,9 @@ import static org.mockito.Mockito.*;
 public class MultiNodeTest
 {
     private static final String THREE_NODE_MEMBERS =
-        "0,localhost:9010,localhost:9020,localhost:9030,localhost:8010|" +
-        "1,localhost:9011,localhost:9021,localhost:9031,localhost:8011|" +
-        "2,localhost:9012,localhost:9022,localhost:9032,localhost:8012";
+        "0,localhost:9010,localhost:9020,localhost:9030,localhost:9040,localhost:8010|" +
+        "1,localhost:9011,localhost:9021,localhost:9031,localhost:9041,localhost:8011|" +
+        "2,localhost:9012,localhost:9022,localhost:9032,localhost:9042,localhost:8012";
 
     private final MemberStatusListener[] mockMemberStatusListeners = new MemberStatusListener[3];
 
@@ -65,14 +64,28 @@ public class MultiNodeTest
         try (ConsensusModuleHarness harness = new ConsensusModuleHarness(
             context, mockService, mockMemberStatusListeners, true, true, false))
         {
-            harness.awaitMemberStatusMessage(1);
-            harness.awaitMemberStatusMessage(2);
+            harness.memberStatusPublisher().canvassPosition(
+                harness.memberStatusPublication(1),
+                -1L,
+                0L,
+                1);
 
-            verify(mockMemberStatusListeners[1]).onRequestVote(0, 0, 0);
-            verify(mockMemberStatusListeners[2]).onRequestVote(0, 0, 0);
+            harness.memberStatusPublisher().canvassPosition(
+                harness.memberStatusPublication(2),
+                -1L,
+                0L,
+                2);
+
+            harness.awaitMemberStatusMessage(1, harness.onRequestVoteCounter(1));
+            harness.awaitMemberStatusMessage(2, harness.onRequestVoteCounter(2));
+
+            verify(mockMemberStatusListeners[1]).onRequestVote(-1L, 0L, 0L, 0);
+            verify(mockMemberStatusListeners[2]).onRequestVote(-1L, 0L, 0L, 0);
 
             harness.memberStatusPublisher().placeVote(
                 harness.memberStatusPublication(1),
+                0L,
+                -1L,
                 0,
                 0,
                 1,
@@ -80,22 +93,24 @@ public class MultiNodeTest
 
             harness.memberStatusPublisher().placeVote(
                 harness.memberStatusPublication(2),
+                0L,
+                -1L,
                 0,
                 0,
                 2,
                 true);
 
-            harness.awaitMemberStatusMessage(1);
-            harness.awaitMemberStatusMessage(2);
+            harness.awaitMemberStatusMessage(1, harness.onNewLeadershipTermCounter(1));
+            harness.awaitMemberStatusMessage(2, harness.onNewLeadershipTermCounter(2));
 
-            verify(mockMemberStatusListeners[1]).onNewLeadershipTerm(eq(0L), eq(0L), eq(0), anyInt());
-            verify(mockMemberStatusListeners[2]).onNewLeadershipTerm(eq(0L), eq(0L), eq(0), anyInt());
-
-            harness.memberStatusPublisher().appendedPosition(
-                harness.memberStatusPublication(1), 0, 0, 1);
+            verify(mockMemberStatusListeners[1]).onNewLeadershipTerm(eq(-1L), eq(0L), eq(0L), eq(0), anyInt());
+            verify(mockMemberStatusListeners[2]).onNewLeadershipTerm(eq(-1L), eq(0L), eq(0L), eq(0), anyInt());
 
             harness.memberStatusPublisher().appendedPosition(
-                harness.memberStatusPublication(2), 0, 0, 2);
+                harness.memberStatusPublication(1), 0L, 0L, 1);
+
+            harness.memberStatusPublisher().appendedPosition(
+                harness.memberStatusPublication(2), 0L, 0L, 2);
 
             harness.awaitServiceOnStart();
         }
@@ -113,35 +128,26 @@ public class MultiNodeTest
         try (ConsensusModuleHarness harness = new ConsensusModuleHarness(
             context, mockService, mockMemberStatusListeners, true, true, false))
         {
+            harness.awaitMemberStatusMessage(1, harness.onCanvassPosition(1));
+
+            verify(mockMemberStatusListeners[1], atLeastOnce()).onCanvassPosition(-1L, 0L, 0);
+
             harness.memberStatusPublisher().requestVote(
-                harness.memberStatusPublication(1), 0, 0, 1);
+                harness.memberStatusPublication(1), -1L, 0L, 0L, 1);
 
-            do
-            {
-                harness.awaitMemberStatusMessage(1);
-            }
-            while (harness.memberStatusCounters(1).onVoteCounter == 0);
+            harness.awaitMemberStatusMessage(1, harness.onVoteCounter(1));
 
-            verify(mockMemberStatusListeners[1]).onVote(0, 1, 0, true);
+            verify(mockMemberStatusListeners[1]).onVote(0L, -1L, 0L, 1, 0, true);
 
-            final int logSessionId = 123456;
-            final ChannelUri channelUri = ChannelUri.parse(context.logChannel());
-            channelUri.put(CommonContext.SESSION_ID_PARAM_NAME, Integer.toString(logSessionId));
-            final Publication logPublication =
-                harness.aeron().addExclusivePublication(channelUri.toString(), context.logStreamId());
-
-            final ChannelUriStringBuilder destinationUri = new ChannelUriStringBuilder()
-                .media("udp")
-                .endpoint(harness.member(0).logEndpoint());
-
-            logPublication.addDestination(destinationUri.build());
+            final Publication publication = harness.createLogPublication(
+                ChannelUri.parse(context.logChannel()), null, 0L, true);
 
             harness.memberStatusPublisher().newLeadershipTerm(
-                harness.memberStatusPublication(1), 0, 0, 1, logSessionId);
+                harness.memberStatusPublication(1), -1L, 0L, 0L, 1, publication.sessionId());
 
-            harness.awaitMemberStatusMessage(1);
+            harness.awaitMemberStatusMessage(1, harness.onAppendedPositionCounter(1));
 
-            verify(mockMemberStatusListeners[1]).onAppendedPosition(0, 0, 0);
+            verify(mockMemberStatusListeners[1]).onAppendedPosition(0L, 0L, 0);
 
             harness.awaitServiceOnStart();
         }
@@ -161,45 +167,67 @@ public class MultiNodeTest
         try (ConsensusModuleHarness harness = new ConsensusModuleHarness(
             context, mockService, mockMemberStatusListeners, false, true, false))
         {
-            harness.awaitMemberStatusMessage(1);
-            harness.awaitMemberStatusMessage(2);
+            harness.memberStatusPublisher().canvassPosition(
+                harness.memberStatusPublication(1),
+                0L,
+                position,
+                1);
 
-            verify(mockMemberStatusListeners[1]).onRequestVote(position, 1, 0);
-            verify(mockMemberStatusListeners[2]).onRequestVote(position, 1, 0);
+            harness.memberStatusPublisher().canvassPosition(
+                harness.memberStatusPublication(2),
+                0L,
+                position,
+                2);
+
+            harness.awaitMemberStatusMessage(1, harness.onRequestVoteCounter(1));
+            harness.awaitMemberStatusMessage(2, harness.onRequestVoteCounter(2));
+
+            verify(mockMemberStatusListeners[1]).onRequestVote(0L, position, 1L, 0);
+            verify(mockMemberStatusListeners[2]).onRequestVote(0L, position, 1L, 0);
 
             harness.memberStatusPublisher().placeVote(
                 harness.memberStatusPublication(1),
-                1,
+                1L,
+                0L,
+                position,
                 0,
                 1,
                 true);
 
             harness.memberStatusPublisher().placeVote(
                 harness.memberStatusPublication(2),
-                1,
+                1L,
+                0L,
+                position,
                 0,
                 2,
                 true);
 
-            harness.awaitMemberStatusMessage(1);
-            harness.awaitMemberStatusMessage(2);
+            harness.awaitMemberStatusMessage(1, harness.onNewLeadershipTermCounter(1));
+            harness.awaitMemberStatusMessage(2, harness.onNewLeadershipTermCounter(2));
 
             verify(mockMemberStatusListeners[1]).onNewLeadershipTerm(
-                eq(position), eq(1L), eq(0), anyInt());
+                eq(0L), eq(position), eq(1L), eq(0), anyInt());
             verify(mockMemberStatusListeners[2]).onNewLeadershipTerm(
-                eq(position), eq(1L), eq(0), anyInt());
+                eq(0L), eq(position), eq(1L), eq(0), anyInt());
 
             harness.memberStatusPublisher().appendedPosition(
-                harness.memberStatusPublication(1), 0, 1, 1);
+                harness.memberStatusPublication(1), 1L, position, 1);
 
             harness.memberStatusPublisher().appendedPosition(
-                harness.memberStatusPublication(2), 0, 1, 2);
+                harness.memberStatusPublication(2), 1L, position, 2);
 
             harness.awaitServiceOnStart();
             harness.awaitServiceOnMessageCounter(10);
 
             verify(mockService, times(10))
-                .onSessionMessage(anyLong(), anyLong(), anyLong(), any(), anyInt(), eq(100), any());
+                .onSessionMessage(any(ClientSession.class), anyLong(), anyLong(), any(), anyInt(), eq(100), any());
+
+            harness.awaitMemberStatusMessage(1, harness.onCommitPosition(1));
+            harness.awaitMemberStatusMessage(2, harness.onCommitPosition(2));
+
+            verify(mockMemberStatusListeners[1]).onCommitPosition(1, position, 0);
+            verify(mockMemberStatusListeners[2]).onCommitPosition(1, position, 0);
         }
     }
 
@@ -217,37 +245,35 @@ public class MultiNodeTest
         try (ConsensusModuleHarness harness = new ConsensusModuleHarness(
             context, mockService, mockMemberStatusListeners, false, true, false))
         {
+            final RecordingExtent recordingExtent = new RecordingExtent();
+            harness.recordingExtent(0, recordingExtent);
+
+            harness.awaitMemberStatusMessage(1, harness.onCanvassPosition(1));
+
+            verify(mockMemberStatusListeners[1], atLeastOnce()).onCanvassPosition(0, position, 0);
+
             harness.memberStatusPublisher().requestVote(
-                harness.memberStatusPublication(1), position, 1, 1);
+                harness.memberStatusPublication(1), 0L, position, 1L, 1);
 
-            harness.awaitMemberStatusMessage(1);
+            harness.awaitMemberStatusMessage(1, harness.onVoteCounter(1));
 
-            verify(mockMemberStatusListeners[1]).onVote(1, 1, 0, true);
+            verify(mockMemberStatusListeners[1]).onVote(1L, 0L, position, 1, 0, true);
 
-            final int logSessionId = 123456;
-            final ChannelUri channelUri = ChannelUri.parse(context.logChannel());
-            channelUri.put(CommonContext.SESSION_ID_PARAM_NAME, Integer.toString(logSessionId));
-            final Publication logPublication =
-                harness.aeron().addExclusivePublication(channelUri.toString(), context.logStreamId());
-
-            final ChannelUriStringBuilder destinationUri = new ChannelUriStringBuilder()
-                .media("udp")
-                .endpoint(harness.member(0).logEndpoint());
-
-            logPublication.addDestination(destinationUri.build());
+            final Publication publication = harness.createLogPublication(
+                ChannelUri.parse(context.logChannel()), recordingExtent, position, false);
 
             harness.memberStatusPublisher().newLeadershipTerm(
-                harness.memberStatusPublication(1), position, 1L, 1, logSessionId);
+                harness.memberStatusPublication(1), 0L, position, 1L, 1, publication.sessionId());
 
-            harness.awaitMemberStatusMessage(1);
+            harness.awaitMemberStatusMessage(1, harness.onAppendedPositionCounter(1));
 
-            verify(mockMemberStatusListeners[1]).onAppendedPosition(position, 1, 0);
+            verify(mockMemberStatusListeners[1], atLeastOnce()).onAppendedPosition(1L, position, 0);
 
             harness.awaitServiceOnStart();
             harness.awaitServiceOnMessageCounter(10);
 
             verify(mockService, times(10))
-                .onSessionMessage(anyLong(), anyLong(), anyLong(), any(), anyInt(), eq(100), any());
+                .onSessionMessage(any(ClientSession.class), anyLong(), anyLong(), any(), anyInt(), eq(100), any());
         }
     }
 
@@ -277,7 +303,8 @@ public class MultiNodeTest
         IoUtil.delete(new File(leaderHarnessDir, ConsensusModuleHarness.DRIVER_DIRECTORY), true);
         ConsensusModuleHarness.copyDirectory(leaderHarnessDir, followerHarnessDir);
 
-        final long truncatePosition = positionMap.get(5);
+        // 96 for NewLeadershipTermEvent at start of the log
+        final long truncatePosition = positionMap.get(5) + 96;
 
         ConsensusModuleHarness.truncateRecordingLog(followerHarnessDir, 0, truncatePosition);
 
@@ -294,39 +321,115 @@ public class MultiNodeTest
             ConsensusModuleHarness followerHarness = new ConsensusModuleHarness(
                 followerContext, mockFollowerService, mockFollowerStatusListeners, false, true, false))
         {
-            leaderHarness.awaitMemberStatusMessage(2);
+            leaderHarness.memberStatusPublisher().canvassPosition(
+                leaderHarness.memberStatusPublication(2),
+                0L,
+                position,
+                2);
 
-            verify(mockLeaderStatusListeners[2]).onRequestVote(position, 1, 0);
+            leaderHarness.awaitMemberStatusMessage(2, leaderHarness.onRequestVoteCounter(2));
+
+            verify(mockLeaderStatusListeners[2]).onRequestVote(0L, position, 1L, 0);
 
             leaderHarness.memberStatusPublisher().placeVote(
                 leaderHarness.memberStatusPublication(2),
-                1,
+                1L,
+                0L,
+                position,
                 0,
                 2,
                 true);
 
-            leaderHarness.awaitMemberStatusMessage(2);
+            leaderHarness.awaitMemberStatusMessage(2, leaderHarness.onNewLeadershipTermCounter(2));
 
-            verify(mockLeaderStatusListeners[2]).onNewLeadershipTerm(
-                eq(position), eq(1L), eq(0), anyInt());
+            verify(mockLeaderStatusListeners[2], atLeastOnce()).onNewLeadershipTerm(
+                eq(0L), eq(position), eq(1L), eq(0), anyInt());
 
             leaderHarness.memberStatusPublisher().appendedPosition(
-                leaderHarness.memberStatusPublication(2), position, 1, 2);
+                leaderHarness.memberStatusPublication(2), 1L, position, 2);
 
             leaderHarness.awaitServiceOnStart();
             followerHarness.awaitServiceOnStart();
             followerHarness.awaitServiceOnMessageCounter(10);
 
             verify(mockFollowerService, times(10))
-                .onSessionMessage(anyLong(), anyLong(), anyLong(), any(), anyInt(), eq(100), any());
+                .onSessionMessage(any(ClientSession.class), anyLong(), anyLong(), any(), anyInt(), eq(100), any());
 
             // wait until Leader sends commitPosition after election. This will only work while Leader waits for
             // all followers.
-            do
-            {
-                leaderHarness.awaitMemberStatusMessage(2);
-            }
-            while (leaderHarness.memberStatusCounters(2).onCommitPositionCounter == 0);
+            leaderHarness.awaitMemberStatusMessage(2, leaderHarness.onCommitPosition(2));
+
+            verify(mockLeaderStatusListeners[2]).onCommitPosition(1, position, 0);
+        }
+    }
+
+    @Ignore
+    @Test(timeout = 10_000L)
+    public void shouldBecomeLeaderStaticNonAppointedThreeNodeConfigWithElection()
+    {
+        final ClusteredService mockService = mock(ClusteredService.class);
+
+        final ConsensusModule.Context context = new ConsensusModule.Context()
+            .clusterMembers(THREE_NODE_MEMBERS);
+
+        try (ConsensusModuleHarness harness = new ConsensusModuleHarness(
+            context, mockService, mockMemberStatusListeners, true, true, false))
+        {
+            harness.memberStatusPublisher().canvassPosition(
+                harness.memberStatusPublication(1),
+                -1L,
+                0L,
+                1);
+
+            harness.memberStatusPublisher().canvassPosition(
+                harness.memberStatusPublication(2),
+                -1L,
+                0L,
+                2);
+
+            harness.awaitMemberStatusMessage(1, harness.onCanvassPosition(1));
+            harness.awaitMemberStatusMessage(2, harness.onCanvassPosition(2));
+
+            verify(mockMemberStatusListeners[1], atLeastOnce()).onCanvassPosition(-1L, 0L, 0);
+            verify(mockMemberStatusListeners[2], atLeastOnce()).onCanvassPosition(-1L, 0L, 0);
+
+            harness.awaitMemberStatusMessage(1, harness.onRequestVoteCounter(1));
+            harness.awaitMemberStatusMessage(2, harness.onRequestVoteCounter(2));
+
+            verify(mockMemberStatusListeners[1]).onRequestVote(-1L, 0L, 0L, 0);
+            verify(mockMemberStatusListeners[2]).onRequestVote(-1L, 0L, 0L, 0);
+
+            harness.memberStatusPublisher().placeVote(
+                harness.memberStatusPublication(1),
+                0L,
+                -1L,
+                0,
+                0,
+                1,
+                true);
+
+            harness.memberStatusPublisher().placeVote(
+                harness.memberStatusPublication(2),
+                0L,
+                -1L,
+                0,
+                0,
+                2,
+                true);
+
+            harness.awaitMemberStatusMessage(1, harness.onNewLeadershipTermCounter(1));
+            harness.awaitMemberStatusMessage(2, harness.onNewLeadershipTermCounter(2));
+
+            verify(mockMemberStatusListeners[1]).onNewLeadershipTerm(eq(-1L), eq(0L), eq(0L), eq(0), anyInt());
+            verify(mockMemberStatusListeners[2]).onNewLeadershipTerm(eq(-1L), eq(0L), eq(0L), eq(0), anyInt());
+
+            harness.memberStatusPublisher().appendedPosition(
+                harness.memberStatusPublication(1), 0L, 0L, 1);
+
+            harness.memberStatusPublisher().appendedPosition(
+                harness.memberStatusPublication(2), 0L, 0L, 2);
+
+            harness.awaitServiceOnStart();
         }
     }
 }

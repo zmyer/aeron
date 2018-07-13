@@ -15,6 +15,7 @@
  */
 package io.aeron.cluster.client;
 
+import io.aeron.Aeron;
 import io.aeron.DirectBufferVector;
 import io.aeron.Publication;
 import io.aeron.cluster.codecs.MessageHeaderEncoder;
@@ -37,6 +38,7 @@ public class SessionDecorator
     public static final int SESSION_HEADER_LENGTH =
         MessageHeaderEncoder.ENCODED_LENGTH + SessionHeaderEncoder.BLOCK_LENGTH;
 
+    private long lastCorrelationId;
     private final DirectBufferVector[] vectors = new DirectBufferVector[2];
     private final DirectBufferVector messageBuffer = new DirectBufferVector();
     private final SessionHeaderEncoder sessionHeaderEncoder = new SessionHeaderEncoder();
@@ -48,13 +50,27 @@ public class SessionDecorator
      */
     public SessionDecorator(final long clusterSessionId)
     {
+        this(clusterSessionId, Aeron.NULL_VALUE);
+    }
+
+    /**
+     * Construct a new session header wrapper.
+     *
+     * @param clusterSessionId that has been allocated by the cluster.
+     * @param lastCorrelationId the last correlation id that was sent to the cluster with this session.
+     */
+    public SessionDecorator(final long clusterSessionId, final long lastCorrelationId)
+    {
         final UnsafeBuffer headerBuffer = new UnsafeBuffer(new byte[SESSION_HEADER_LENGTH]);
         sessionHeaderEncoder
             .wrapAndApplyHeader(headerBuffer, 0, new MessageHeaderEncoder())
-            .clusterSessionId(clusterSessionId);
+            .clusterSessionId(clusterSessionId)
+            .timestamp(Aeron.NULL_VALUE);
 
         vectors[0] = new DirectBufferVector(headerBuffer, 0, SESSION_HEADER_LENGTH);
         vectors[1] = messageBuffer;
+
+        this.lastCorrelationId = lastCorrelationId;
     }
 
     /**
@@ -65,6 +81,29 @@ public class SessionDecorator
     public void clusterSessionId(final long clusterSessionId)
     {
         sessionHeaderEncoder.clusterSessionId(clusterSessionId);
+    }
+
+    /**
+     * Get the last correlation id generated for this session. Starts with {@link Aeron#NULL_VALUE}.
+     *
+     * @return the last correlation id generated for this session.
+     * @see #nextCorrelationId()
+     */
+    public long lastCorrelationId()
+    {
+        return lastCorrelationId;
+    }
+
+    /**
+     * Generate a new correlation id to be used for this session. This is not threadsafe. If you require a threadsafe
+     * correlation id generation then use {@link Aeron#nextCorrelationId()}.
+     *
+     * @return  a new correlation id to be used for this session.
+     * @see #lastCorrelationId()
+     */
+    public long nextCorrelationId()
+    {
+        return ++lastCorrelationId;
     }
 
     /**
@@ -87,33 +126,6 @@ public class SessionDecorator
         final int length)
     {
         sessionHeaderEncoder.correlationId(correlationId);
-        sessionHeaderEncoder.timestamp(0L);
-        messageBuffer.reset(buffer, offset, length);
-
-        return publication.offer(vectors, null);
-    }
-
-    /**
-     * Non-blocking publish of a partial buffer containing a message plus session header to a cluster.
-     *
-     * @param publication   to be offer to.
-     * @param correlationId to be used to identify the message to the cluster.
-     * @param timestampMs   for the message.
-     * @param buffer        containing message.
-     * @param offset        offset in the buffer at which the encoded message begins.
-     * @param length        in bytes of the encoded message.
-     * @return the same as {@link Publication#offer(DirectBuffer, int, int)}.
-     */
-    public long offer(
-        final Publication publication,
-        final long correlationId,
-        final long timestampMs,
-        final DirectBuffer buffer,
-        final int offset,
-        final int length)
-    {
-        sessionHeaderEncoder.correlationId(correlationId);
-        sessionHeaderEncoder.timestamp(timestampMs);
         messageBuffer.reset(buffer, offset, length);
 
         return publication.offer(vectors, null);

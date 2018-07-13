@@ -33,7 +33,7 @@ import static io.aeron.driver.DataPacketDispatcher.SessionState.*;
  * <p>
  * All methods should be called from the {@link Receiver} thread.
  */
-public class DataPacketDispatcher implements DataPacketHandler, SetupMessageHandler
+public class DataPacketDispatcher
 {
     enum SessionState
     {
@@ -250,7 +250,8 @@ public class DataPacketDispatcher implements DataPacketHandler, SetupMessageHand
         final DataHeaderFlyweight header,
         final UnsafeBuffer buffer,
         final int length,
-        final InetSocketAddress srcAddress)
+        final InetSocketAddress srcAddress,
+        final int transportIndex)
     {
         final int streamId = header.streamId();
         final StreamInterest streamInterest = streamInterestByIdMap.get(streamId);
@@ -265,7 +266,8 @@ public class DataPacketDispatcher implements DataPacketHandler, SetupMessageHand
             {
                 if (null != sessionInterest.image)
                 {
-                    return sessionInterest.image.insertPacket(termId, header.termOffset(), buffer, length);
+                    return sessionInterest.image.insertPacket(
+                        termId, header.termOffset(), buffer, length, transportIndex, srcAddress);
                 }
             }
             else if (!DataHeaderFlyweight.isEndOfStream(buffer))
@@ -273,7 +275,7 @@ public class DataPacketDispatcher implements DataPacketHandler, SetupMessageHand
                 if (streamInterest.isForAllSessions || streamInterest.subscribedSessionIds.contains(sessionId))
                 {
                     streamInterest.sessionInterestByIdMap.put(sessionId, new SessionInterest(PENDING_SETUP_FRAME));
-                    elicitSetupMessageFromSource(channelEndpoint, srcAddress, streamId, sessionId);
+                    elicitSetupMessageFromSource(channelEndpoint, transportIndex, srcAddress, streamId, sessionId);
                 }
                 else
                 {
@@ -288,8 +290,8 @@ public class DataPacketDispatcher implements DataPacketHandler, SetupMessageHand
     public void onSetupMessage(
         final ReceiveChannelEndpoint channelEndpoint,
         final SetupFlyweight header,
-        final UnsafeBuffer buffer,
-        final InetSocketAddress srcAddress)
+        final InetSocketAddress srcAddress,
+        final int transportIndex)
     {
         final int streamId = header.streamId();
         final StreamInterest streamInterest = streamInterestByIdMap.get(streamId);
@@ -309,6 +311,7 @@ public class DataPacketDispatcher implements DataPacketHandler, SetupMessageHand
 
                     createPublicationImage(
                         channelEndpoint,
+                        transportIndex,
                         srcAddress,
                         streamId,
                         sessionId,
@@ -319,12 +322,17 @@ public class DataPacketDispatcher implements DataPacketHandler, SetupMessageHand
                         header.mtuLength(),
                         header.ttl());
                 }
+                else if (null != sessionInterest.image)
+                {
+                    sessionInterest.image.addControlAddressIfUnknown(transportIndex, srcAddress);
+                }
             }
             else if (streamInterest.isForAllSessions || streamInterest.subscribedSessionIds.contains(sessionId))
             {
                 streamInterest.sessionInterestByIdMap.put(sessionId, new SessionInterest(INIT_IN_PROGRESS));
                 createPublicationImage(
                     channelEndpoint,
+                    transportIndex,
                     srcAddress,
                     streamId,
                     sessionId,
@@ -345,7 +353,8 @@ public class DataPacketDispatcher implements DataPacketHandler, SetupMessageHand
     public void onRttMeasurement(
         final ReceiveChannelEndpoint channelEndpoint,
         final RttMeasurementFlyweight header,
-        final InetSocketAddress srcAddress)
+        final InetSocketAddress srcAddress,
+        final int transportIndex)
     {
         final int streamId = header.streamId();
         final StreamInterest streamInterest = streamInterestByIdMap.get(streamId);
@@ -361,15 +370,15 @@ public class DataPacketDispatcher implements DataPacketHandler, SetupMessageHand
                 {
                     // TODO: check rate limit
 
-                    final InetSocketAddress controlAddress = channelEndpoint.isMulticast() ?
-                        channelEndpoint.udpChannel().remoteControl() : srcAddress;
+                    final InetSocketAddress controlAddress = channelEndpoint.isMulticast(transportIndex) ?
+                        channelEndpoint.udpChannel(transportIndex).remoteControl() : srcAddress;
 
                     channelEndpoint.sendRttMeasurement(
-                        controlAddress, sessionId, streamId, header.echoTimestampNs(), 0, false);
+                        transportIndex, controlAddress, sessionId, streamId, header.echoTimestampNs(), 0, false);
                 }
                 else
                 {
-                    sessionInterest.image.onRttMeasurement(header, srcAddress);
+                    sessionInterest.image.onRttMeasurement(header, transportIndex, srcAddress);
                 }
             }
         }
@@ -382,19 +391,21 @@ public class DataPacketDispatcher implements DataPacketHandler, SetupMessageHand
 
     private void elicitSetupMessageFromSource(
         final ReceiveChannelEndpoint channelEndpoint,
+        final int transportIndex,
         final InetSocketAddress srcAddress,
         final int streamId,
         final int sessionId)
     {
-        final InetSocketAddress controlAddress =
-            channelEndpoint.isMulticast() ? channelEndpoint.udpChannel().remoteControl() : srcAddress;
+        final InetSocketAddress controlAddress = channelEndpoint.isMulticast(transportIndex) ?
+            channelEndpoint.udpChannel(transportIndex).remoteControl() : srcAddress;
 
-        channelEndpoint.sendSetupElicitingStatusMessage(controlAddress, sessionId, streamId);
-        receiver.addPendingSetupMessage(sessionId, streamId, channelEndpoint, false, controlAddress);
+        channelEndpoint.sendSetupElicitingStatusMessage(transportIndex, controlAddress, sessionId, streamId);
+        receiver.addPendingSetupMessage(sessionId, streamId, transportIndex, channelEndpoint, false, controlAddress);
     }
 
     private void createPublicationImage(
         final ReceiveChannelEndpoint channelEndpoint,
+        final int transportIndex,
         final InetSocketAddress srcAddress,
         final int streamId,
         final int sessionId,
@@ -405,10 +416,10 @@ public class DataPacketDispatcher implements DataPacketHandler, SetupMessageHand
         final int mtuLength,
         final int setupTtl)
     {
-        final InetSocketAddress controlAddress = channelEndpoint.isMulticast() ?
-            channelEndpoint.udpChannel().remoteControl() : srcAddress;
+        final InetSocketAddress controlAddress = channelEndpoint.isMulticast(transportIndex) ?
+            channelEndpoint.udpChannel(transportIndex).remoteControl() : srcAddress;
 
-        if (channelEndpoint.isMulticast() && channelEndpoint.multicastTtl() < setupTtl)
+        if (channelEndpoint.isMulticast(transportIndex) && channelEndpoint.multicastTtl(transportIndex) < setupTtl)
         {
             channelEndpoint.possibleTtlAsymmetryEncountered();
         }
@@ -421,6 +432,7 @@ public class DataPacketDispatcher implements DataPacketHandler, SetupMessageHand
             termOffset,
             termLength,
             mtuLength,
+            transportIndex,
             controlAddress,
             srcAddress,
             channelEndpoint);

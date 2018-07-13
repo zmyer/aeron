@@ -15,8 +15,11 @@
  */
 package io.aeron.driver;
 
+import io.aeron.Aeron;
 import io.aeron.driver.buffer.RawLog;
+import io.aeron.driver.media.DestinationImageControlAddress;
 import io.aeron.driver.media.ReceiveChannelEndpoint;
+import io.aeron.driver.media.ReceiveDestinationUdpTransport;
 import io.aeron.driver.reports.LossReport;
 import io.aeron.driver.status.SystemCounters;
 import io.aeron.logbuffer.LogBufferDescriptor;
@@ -25,9 +28,9 @@ import io.aeron.protocol.DataHeaderFlyweight;
 import io.aeron.protocol.RttMeasurementFlyweight;
 import org.agrona.collections.ArrayUtil;
 import org.agrona.concurrent.EpochClock;
-import org.agrona.concurrent.status.AtomicCounter;
 import org.agrona.concurrent.NanoClock;
 import org.agrona.concurrent.UnsafeBuffer;
+import org.agrona.concurrent.status.AtomicCounter;
 import org.agrona.concurrent.status.Position;
 import org.agrona.concurrent.status.ReadablePosition;
 
@@ -65,6 +68,7 @@ class PublicationImageReceiverFields extends PublicationImagePadding2
 {
     protected boolean isEndOfStream = false;
     protected long lastPacketTimestampNs;
+    protected DestinationImageControlAddress[] controlAddresses = new DestinationImageControlAddress[1];
 }
 
 class PublicationImagePadding3 extends PublicationImageReceiverFields
@@ -86,17 +90,17 @@ public class PublicationImage
     }
 
     private long timeOfLastStateChangeNs;
-    private long lastLossChangeNumber = -1;
-    private long lastSmChangeNumber = -1;
+    private long lastLossChangeNumber = Aeron.NULL_VALUE;
+    private long lastSmChangeNumber = Aeron.NULL_VALUE;
 
-    private volatile long beginLossChange = -1;
-    private volatile long endLossChange = -1;
+    private volatile long beginLossChange = Aeron.NULL_VALUE;
+    private volatile long endLossChange = Aeron.NULL_VALUE;
     private int lossTermId;
     private int lossTermOffset;
     private int lossLength;
 
-    private volatile long beginSmChange = -1;
-    private volatile long endSmChange = -1;
+    private volatile long beginSmChange = Aeron.NULL_VALUE;
+    private volatile long endSmChange = Aeron.NULL_VALUE;
     private long nextSmPosition;
     private int nextSmReceiverWindowLength;
 
@@ -116,7 +120,6 @@ public class PublicationImage
 
     private final NanoClock nanoClock;
     private final NanoClock cachedNanoClock;
-    private final InetSocketAddress controlAddress;
     private final ReceiveChannelEndpoint channelEndpoint;
     private final UnsafeBuffer[] termBuffers;
     private final Position hwmPosition;
@@ -137,6 +140,7 @@ public class PublicationImage
         final long correlationId,
         final long imageLivenessTimeoutNs,
         final ReceiveChannelEndpoint channelEndpoint,
+        final int transportIndex,
         final InetSocketAddress controlAddress,
         final int sessionId,
         final int streamId,
@@ -160,7 +164,6 @@ public class PublicationImage
         this.correlationId = correlationId;
         this.imageLivenessTimeoutNs = imageLivenessTimeoutNs;
         this.channelEndpoint = channelEndpoint;
-        this.controlAddress = controlAddress;
         this.sessionId = sessionId;
         this.streamId = streamId;
         this.rawLog = rawLog;
@@ -186,6 +189,9 @@ public class PublicationImage
         final long nowNs = cachedNanoClock.nanoTime();
         timeOfLastStateChangeNs = nowNs;
         lastPacketTimestampNs = nowNs;
+
+        controlAddresses = ArrayUtil.ensureCapacity(controlAddresses, transportIndex + 1);
+        controlAddresses[transportIndex] = new DestinationImageControlAddress(nowNs, controlAddress);
 
         termBuffers = rawLog.termBuffers();
         lossDetector = new LossDetector(lossFeedbackDelayGenerator, this);
@@ -356,6 +362,32 @@ public class PublicationImage
         state(ACTIVE);
     }
 
+    void addDestination(final int transportIndex, final ReceiveDestinationUdpTransport transport)
+    {
+        controlAddresses = ArrayUtil.ensureCapacity(controlAddresses, transportIndex + 1);
+
+        if (transport.isMulticast())
+        {
+            controlAddresses[transportIndex] =
+                new DestinationImageControlAddress(nanoClock.nanoTime(), transport.udpChannel().remoteControl());
+        }
+        else if (transport.hasExplicitControl())
+        {
+            controlAddresses[transportIndex] =
+                new DestinationImageControlAddress(nanoClock.nanoTime(), transport.explicitControlAddress());
+        }
+    }
+
+    void removeDestination(final int transportIndex)
+    {
+        controlAddresses[transportIndex] = null;
+    }
+
+    void addControlAddressIfUnknown(final int transportIndex, final InetSocketAddress remoteAddress)
+    {
+        updateControlAddress(transportIndex, remoteAddress, nanoClock.nanoTime());
+    }
+
     private void state(final State state)
     {
         timeOfLastStateChangeNs = cachedNanoClock.nanoTime();
@@ -455,7 +487,13 @@ public class PublicationImage
      * @param length     of the data packet
      * @return number of bytes applied as a result of this insertion.
      */
-    int insertPacket(final int termId, final int termOffset, final UnsafeBuffer buffer, final int length)
+    int insertPacket(
+        final int termId,
+        final int termOffset,
+        final UnsafeBuffer buffer,
+        final int length,
+        final int transportIndex,
+        final InetSocketAddress srcAddress)
     {
         final boolean isHeartbeat = DataHeaderFlyweight.isHeartbeat(buffer, length);
         final long packetPosition = computePosition(termId, termOffset, positionBitsToShift, initialTermId);
@@ -483,6 +521,7 @@ public class PublicationImage
 
             lastPacketTimestampNs = cachedNanoClock.nanoTime();
             hwmPosition.proposeMaxOrdered(proposedPosition);
+            updateControlAddress(transportIndex, srcAddress, lastPacketTimestampNs);
         }
 
         return length;
@@ -533,7 +572,7 @@ public class PublicationImage
                     final int termOffset = (int)smPosition & termLengthMask;
 
                     channelEndpoint.sendStatusMessage(
-                        controlAddress, sessionId, streamId, termId, termOffset, receiverWindowLength, (byte)0);
+                        controlAddresses, sessionId, streamId, termId, termOffset, receiverWindowLength, (byte)0);
 
                     statusMessagesSent.incrementOrdered();
 
@@ -569,7 +608,7 @@ public class PublicationImage
             {
                 if (isReliable)
                 {
-                    channelEndpoint.sendNakMessage(controlAddress, sessionId, streamId, termId, termOffset, length);
+                    channelEndpoint.sendNakMessage(controlAddresses, sessionId, streamId, termId, termOffset, length);
                     nakMessagesSent.incrementOrdered();
                 }
                 else
@@ -604,7 +643,7 @@ public class PublicationImage
         {
             final long preciseTimeNs = nanoClock.nanoTime();
 
-            channelEndpoint.sendRttMeasurement(controlAddress, sessionId, streamId, preciseTimeNs, 0, true);
+            channelEndpoint.sendRttMeasurement(controlAddresses, sessionId, streamId, preciseTimeNs, 0, true);
             congestionControl.onRttMeasurementSent(preciseTimeNs);
 
             workCount = 1;
@@ -616,10 +655,12 @@ public class PublicationImage
     /**
      * Called from the {@link Receiver} upon receiving an RTT Measurement that is a reply.
      *
-     * @param header     of the measurement
-     * @param srcAddress from the sender of the measurement
+     * @param header         of the measurement
+     * @param transportIndex that the RTT Measurement came in on.
+     * @param srcAddress     from the sender of the measurement
      */
-    void onRttMeasurement(final RttMeasurementFlyweight header, final InetSocketAddress srcAddress)
+    void onRttMeasurement(
+        final RttMeasurementFlyweight header, final int transportIndex, final InetSocketAddress srcAddress)
     {
         final long nowNs = nanoClock.nanoTime();
         final long rttInNs = nowNs - header.echoTimestampNs() - header.receptionDelta();
@@ -728,5 +769,18 @@ public class PublicationImage
             dirtyTerm.setMemory(termOffset, length, (byte)0);
             this.cleanPosition = cleanPosition + length;
         }
+    }
+
+    private void updateControlAddress(final int transportIndex, final InetSocketAddress srcAddress, final long nowNs)
+    {
+        DestinationImageControlAddress controlAddress = controlAddresses[transportIndex];
+
+        if (null == controlAddress)
+        {
+            controlAddress = new DestinationImageControlAddress(nowNs, srcAddress);
+            controlAddresses[transportIndex] = controlAddress;
+        }
+
+        controlAddress.timeOfLastFrameNs = nowNs;
     }
 }

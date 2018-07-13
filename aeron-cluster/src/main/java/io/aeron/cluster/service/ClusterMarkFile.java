@@ -15,6 +15,8 @@
  */
 package io.aeron.cluster.service;
 
+import io.aeron.Aeron;
+import io.aeron.cluster.client.ClusterException;
 import io.aeron.cluster.codecs.mark.ClusterComponentType;
 import io.aeron.cluster.codecs.mark.MarkFileHeaderDecoder;
 import io.aeron.cluster.codecs.mark.MarkFileHeaderEncoder;
@@ -35,13 +37,18 @@ import java.util.Date;
 import java.util.Objects;
 import java.util.function.Consumer;
 
+import static io.aeron.Aeron.NULL_VALUE;
+
 /**
  * Used to indicate if a cluster service is running and what configuration it is using. Errors encountered by
- * the service are recorded in within this file by a {@link org.agrona.concurrent.errors.DistinctErrorLog}.
+ * the service are recorded within this file by a {@link org.agrona.concurrent.errors.DistinctErrorLog}.
  */
 public class ClusterMarkFile implements AutoCloseable
 {
-    public static final String FILENAME = "cluster-mark.dat";
+    public static final String FILE_EXTENSION = ".dat";
+    public static final String FILENAME = "cluster-mark" + FILE_EXTENSION;
+    public static final String SERVICE_FILENAME_PREFIX = "cluster-mark-service-";
+    public static final String SERVICE_FILENAME_FORMAT = SERVICE_FILENAME_PREFIX + "%d" + FILE_EXTENSION;
     public static final int HEADER_LENGTH = 8 * 1024;
 
     private final MarkFileHeaderDecoder headerDecoder = new MarkFileHeaderDecoder();
@@ -71,7 +78,7 @@ public class ClusterMarkFile implements AutoCloseable
             {
                 if (version != MarkFileHeaderDecoder.SCHEMA_VERSION)
                 {
-                    throw new IllegalArgumentException("mark file version " + version +
+                    throw new ClusterException("mark file version " + version +
                         " does not match software:" + MarkFileHeaderDecoder.SCHEMA_VERSION);
                 }
             },
@@ -92,6 +99,10 @@ public class ClusterMarkFile implements AutoCloseable
 
             errorBuffer.setMemory(0, errorBufferLength, (byte)0);
         }
+        else
+        {
+            headerEncoder.candidateTermId(NULL_VALUE);
+        }
 
         final ClusterComponentType existingType = headerDecoder.componentType();
 
@@ -105,6 +116,7 @@ public class ClusterMarkFile implements AutoCloseable
         headerEncoder.headerLength(HEADER_LENGTH);
         headerEncoder.errorBufferLength(errorBufferLength);
         headerEncoder.pid(SystemUtil.getPid());
+        headerEncoder.startTimestamp(epochClock.time());
     }
 
     public ClusterMarkFile(
@@ -139,6 +151,28 @@ public class ClusterMarkFile implements AutoCloseable
     public void close()
     {
         CloseHelper.close(markFile);
+    }
+
+    /**
+     * Get the current value of a candidate term id if a vote is placed in an election.
+     *
+     * @return the current candidate term id within an election after voting or {@link Aeron#NULL_VALUE} if
+     * no voting phase of an election is currently active.
+     */
+    public long candidateTermId()
+    {
+        return buffer.getLongVolatile(MarkFileHeaderDecoder.candidateTermIdEncodingOffset());
+    }
+
+    /**
+     * Record the fact that a node has voted in a current election for a candidate so it can survive a restart.
+     *
+     * @param candidateTermId to record that a vote has taken place.
+     */
+    public void candidateTermId(final long candidateTermId)
+    {
+        buffer.putLongVolatile(MarkFileHeaderEncoder.candidateTermIdEncodingOffset(), candidateTermId);
+        markFile.mappedByteBuffer().force();
     }
 
     public void signalReady()
@@ -247,8 +281,13 @@ public class ClusterMarkFile implements AutoCloseable
 
         if (lengthRequired > HEADER_LENGTH)
         {
-            throw new IllegalArgumentException(
+            throw new ClusterException(
                 "MarkFile length required " + lengthRequired + " greater than " + HEADER_LENGTH);
         }
+    }
+
+    public static String markFilenameForService(final int serviceId)
+    {
+        return String.format(SERVICE_FILENAME_FORMAT, serviceId);
     }
 }

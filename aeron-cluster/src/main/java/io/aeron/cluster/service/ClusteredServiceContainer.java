@@ -18,8 +18,10 @@ package io.aeron.cluster.service;
 import io.aeron.Aeron;
 import io.aeron.CommonContext;
 import io.aeron.archive.client.AeronArchive;
+import io.aeron.cluster.client.ClusterException;
 import io.aeron.cluster.codecs.mark.ClusterComponentType;
 import io.aeron.cluster.codecs.mark.MarkFileHeaderEncoder;
+import io.aeron.exceptions.ConfigurationException;
 import org.agrona.CloseHelper;
 import org.agrona.ErrorHandler;
 import org.agrona.IoUtil;
@@ -61,7 +63,7 @@ public final class ClusteredServiceContainer implements AutoCloseable
         {
             container.context().shutdownSignalBarrier().await();
 
-            System.out.println("Shutdown ClusteredMediaDriver...");
+            System.out.println("Shutdown ClusteredServiceContainer...");
         }
     }
 
@@ -123,12 +125,12 @@ public final class ClusteredServiceContainer implements AutoCloseable
     public static class Configuration
     {
         /**
-         * Identity for a clustered service.
+         * Identity for a clustered service. Services should be numbered from 0 and be contiguous.
          */
         public static final String SERVICE_ID_PROP_NAME = "aeron.cluster.service.id";
 
         /**
-         * Identity for a clustered service. Default to 0.
+         * Default identity for a clustered service.
          */
         public static final int SERVICE_ID_DEFAULT = 0;
 
@@ -138,7 +140,7 @@ public final class ClusteredServiceContainer implements AutoCloseable
         public static final String SERVICE_NAME_PROP_NAME = "aeron.cluster.service.name";
 
         /**
-         * Name for a clustered service to be the role of the {@link Agent}. Default to "clustered-service".
+         * Name for a clustered service to be the role of the {@link Agent}.
          */
         public static final String SERVICE_NAME_DEFAULT = "clustered-service";
 
@@ -154,7 +156,7 @@ public final class ClusteredServiceContainer implements AutoCloseable
         public static final String REPLAY_CHANNEL_PROP_NAME = "aeron.cluster.replay.channel";
 
         /**
-         * Channel to be used for log or snapshot replay on startup.
+         * Default channel to be used for log or snapshot replay on startup.
          */
         public static final String REPLAY_CHANNEL_DEFAULT = CommonContext.IPC_CHANNEL;
 
@@ -164,30 +166,39 @@ public final class ClusteredServiceContainer implements AutoCloseable
         public static final String REPLAY_STREAM_ID_PROP_NAME = "aeron.cluster.replay.stream.id";
 
         /**
-         * Stream id for the log or snapshot replay within a channel.
+         * Default stream id for the log or snapshot replay within a channel.
          */
-        public static final int REPLAY_STREAM_ID_DEFAULT = 4;
+        public static final int REPLAY_STREAM_ID_DEFAULT = 103;
 
         /**
-         * Channel for bi-directional communications between the consensus module and services.
+         * Channel for communications between the local consensus module and services.
          */
         public static final String SERVICE_CONTROL_CHANNEL_PROP_NAME = "aeron.cluster.service.control.channel";
 
         /**
-         * Channel for for bi-directional communications between the consensus module and services. This should be IPC.
+         * Default channel for communications between the local consensus module and services. This should be IPC.
          */
-        public static final String SERVICE_CONTROL_CHANNEL_DEFAULT = "aeron:ipc?term-length=64k";
+        public static final String SERVICE_CONTROL_CHANNEL_DEFAULT = "aeron:ipc?term-length=64k|mtu=8k";
 
         /**
-         * Stream id within a channel for bi-directional communications between the consensus module and services.
+         * Stream id within a channel for communications from the consensus module to the services.
          */
-        public static final String SERVICE_CONTROL_STREAM_ID_PROP_NAME = "aeron.cluster.service.control.stream.id";
+        public static final String SERVICE_STREAM_ID_PROP_NAME = "aeron.cluster.service.stream.id";
 
         /**
-         * Stream id within a channel for bi-directional communications between the consensus module and services.
-         * Default to stream id of 5.
+         * Default stream id within a channel for communications from the consensus module to the services.
          */
-        public static final int CONSENSUS_MODULE_STREAM_ID_DEFAULT = 5;
+        public static final int SERVICE_CONTROL_STREAM_ID_DEFAULT = 104;
+
+        /**
+         * Stream id within a channel for communications from the services to the consensus module.
+         */
+        public static final String CONSENSUS_MODULE_STREAM_ID_PROP_NAME = "aeron.cluster.consensus.module.stream.id";
+
+        /**
+         * Default stream id within a channel for communications from the services to the consensus module.
+         */
+        public static final int CONSENSUS_MODULE_STREAM_ID_DEFAULT = 105;
 
         /**
          * Channel to be used for archiving snapshots.
@@ -195,7 +206,7 @@ public final class ClusteredServiceContainer implements AutoCloseable
         public static final String SNAPSHOT_CHANNEL_PROP_NAME = "aeron.cluster.snapshot.channel";
 
         /**
-         * Channel to be used for archiving snapshots.
+         * Default channel to be used for archiving snapshots.
          */
         public static final String SNAPSHOT_CHANNEL_DEFAULT = CommonContext.IPC_CHANNEL;
 
@@ -205,28 +216,27 @@ public final class ClusteredServiceContainer implements AutoCloseable
         public static final String SNAPSHOT_STREAM_ID_PROP_NAME = "aeron.cluster.snapshot.stream.id";
 
         /**
-         * Stream id for the archived snapshots within a channel.
+         * Default stream id for the archived snapshots within a channel.
          */
-        public static final int SNAPSHOT_STREAM_ID_DEFAULT = 7;
+        public static final int SNAPSHOT_STREAM_ID_DEFAULT = 106;
 
         /**
-         * Directory to use for the clustered service.
+         * Directory to use for the aeron cluster.
          */
-        public static final String CLUSTERED_SERVICE_DIR_PROP_NAME = "aeron.clustered.service.dir";
+        public static final String CLUSTER_DIR_PROP_NAME = "aeron.cluster.dir";
 
         /**
-         * Directory to use for the cluster container.
+         * Default directory to use for the aeron cluster.
          */
-        public static final String CLUSTERED_SERVICE_DIR_DEFAULT = "clustered-service";
+        public static final String CLUSTER_DIR_DEFAULT = "aeron-cluster";
 
         /**
-         * Size in bytes of the error buffer for the cluster container.
+         * Length in bytes of the error buffer for the cluster container.
          */
         public static final String ERROR_BUFFER_LENGTH_PROP_NAME = "aeron.cluster.service.error.buffer.length";
 
         /**
-         * Size in bytes of the error buffer for the cluster container.
-         * Default to 1MB.
+         * Default length in bytes of the error buffer for the cluster container.
          */
         public static final int ERROR_BUFFER_LENGTH_DEFAULT = 1024 * 1024;
 
@@ -286,14 +296,26 @@ public final class ClusteredServiceContainer implements AutoCloseable
 
         /**
          * The value {@link #CONSENSUS_MODULE_STREAM_ID_DEFAULT} or system property
-         * {@link #SERVICE_CONTROL_STREAM_ID_PROP_NAME} if set.
+         * {@link #CONSENSUS_MODULE_STREAM_ID_PROP_NAME} if set.
          *
          * @return {@link #CONSENSUS_MODULE_STREAM_ID_DEFAULT} or system property
-         * {@link #SERVICE_CONTROL_STREAM_ID_PROP_NAME} if set.
+         * {@link #CONSENSUS_MODULE_STREAM_ID_PROP_NAME} if set.
          */
-        public static int serviceControlStreamId()
+        public static int consensusModuleStreamId()
         {
-            return Integer.getInteger(SERVICE_CONTROL_STREAM_ID_PROP_NAME, CONSENSUS_MODULE_STREAM_ID_DEFAULT);
+            return Integer.getInteger(CONSENSUS_MODULE_STREAM_ID_PROP_NAME, CONSENSUS_MODULE_STREAM_ID_DEFAULT);
+        }
+
+        /**
+         * The value {@link #SERVICE_CONTROL_STREAM_ID_DEFAULT} or system property
+         * {@link #SERVICE_STREAM_ID_PROP_NAME} if set.
+         *
+         * @return {@link #SERVICE_CONTROL_STREAM_ID_DEFAULT} or system property
+         * {@link #SERVICE_STREAM_ID_PROP_NAME} if set.
+         */
+        public static int serviceStreamId()
+        {
+            return Integer.getInteger(SERVICE_STREAM_ID_PROP_NAME, SERVICE_CONTROL_STREAM_ID_DEFAULT);
         }
 
         /**
@@ -336,15 +358,13 @@ public final class ClusteredServiceContainer implements AutoCloseable
         }
 
         /**
-         * The value {@link #CLUSTERED_SERVICE_DIR_DEFAULT} or system property
-         * {@link #CLUSTERED_SERVICE_DIR_PROP_NAME} if set.
+         * The value {@link #CLUSTER_DIR_DEFAULT} or system property {@link #CLUSTER_DIR_PROP_NAME} if set.
          *
-         * @return {@link #CLUSTERED_SERVICE_DIR_DEFAULT} or system property
-         * {@link #CLUSTERED_SERVICE_DIR_PROP_NAME} if set.
+         * @return {@link #CLUSTER_DIR_DEFAULT} or system property {@link #CLUSTER_DIR_PROP_NAME} if set.
          */
-        public static String clusteredServiceDirName()
+        public static String clusterDirName()
         {
-            return System.getProperty(CLUSTERED_SERVICE_DIR_PROP_NAME, CLUSTERED_SERVICE_DIR_DEFAULT);
+            return System.getProperty(CLUSTER_DIR_PROP_NAME, CLUSTER_DIR_DEFAULT);
         }
 
         /**
@@ -366,11 +386,11 @@ public final class ClusteredServiceContainer implements AutoCloseable
         private String replayChannel = Configuration.replayChannel();
         private int replayStreamId = Configuration.replayStreamId();
         private String serviceControlChannel = Configuration.serviceControlChannel();
-        private int serviceControlStreamId = Configuration.serviceControlStreamId();
+        private int consensusModuleStreamId = Configuration.consensusModuleStreamId();
+        private int serviceStreamId = Configuration.serviceStreamId();
         private String snapshotChannel = Configuration.snapshotChannel();
         private int snapshotStreamId = Configuration.snapshotStreamId();
         private int errorBufferLength = Configuration.errorBufferLength();
-        private boolean deleteDirOnStart = false;
 
         private ThreadFactory threadFactory;
         private Supplier<IdleStrategy> idleStrategySupplier;
@@ -380,14 +400,13 @@ public final class ClusteredServiceContainer implements AutoCloseable
         private AtomicCounter errorCounter;
         private CountedErrorHandler countedErrorHandler;
         private AeronArchive.Context archiveContext;
-        private String clusteredServiceDirectoryName = Configuration.clusteredServiceDirName();
-        private File clusteredServiceDir;
+        private String clusterDirectoryName = Configuration.clusterDirName();
+        private File clusterDir;
         private String aeronDirectoryName = CommonContext.getAeronDirectoryName();
         private Aeron aeron;
         private boolean ownsAeronClient;
 
         private ClusteredService clusteredService;
-        private RecordingLog recordingLog;
         private ShutdownSignalBarrier shutdownSignalBarrier;
         private Runnable terminationHook;
         private ClusterMarkFile markFile;
@@ -412,6 +431,11 @@ public final class ClusteredServiceContainer implements AutoCloseable
         @SuppressWarnings("MethodLength")
         public void conclude()
         {
+            if (serviceId < 0)
+            {
+                throw new ConfigurationException("service id must be not be negative: " + serviceId);
+            }
+
             if (null == threadFactory)
             {
                 threadFactory = Thread::new;
@@ -427,33 +451,21 @@ public final class ClusteredServiceContainer implements AutoCloseable
                 epochClock = new SystemEpochClock();
             }
 
-            if (deleteDirOnStart)
+            if (null == clusterDir)
             {
-                if (null != clusteredServiceDir)
-                {
-                    IoUtil.delete(clusteredServiceDir, true);
-                }
-                else
-                {
-                    IoUtil.delete(new File(Configuration.clusteredServiceDirName()), true);
-                }
+                clusterDir = new File(clusterDirectoryName);
             }
 
-            if (null == clusteredServiceDir)
+            if (!clusterDir.exists() && !clusterDir.mkdirs())
             {
-                clusteredServiceDir = new File(clusteredServiceDirectoryName);
-            }
-
-            if (!clusteredServiceDir.exists() && !clusteredServiceDir.mkdirs())
-            {
-                throw new IllegalStateException(
-                    "Failed to create clustered service dir: " + clusteredServiceDir.getAbsolutePath());
+                throw new ClusterException(
+                    "failed to create cluster dir: " + clusterDir.getAbsolutePath());
             }
 
             if (null == markFile)
             {
                 markFile = new ClusterMarkFile(
-                    new File(clusteredServiceDir, ClusterMarkFile.FILENAME),
+                    new File(clusterDir, ClusterMarkFile.markFilenameForService(serviceId)),
                     ClusterComponentType.CONTAINER,
                     errorBufferLength,
                     epochClock,
@@ -478,17 +490,12 @@ public final class ClusteredServiceContainer implements AutoCloseable
                         .errorHandler(errorHandler)
                         .epochClock(epochClock));
 
-                if (null == errorCounter)
-                {
-                    errorCounter = aeron.addCounter(SYSTEM_COUNTER_TYPE_ID, "Cluster errors - service " + serviceId);
-                }
-
                 ownsAeronClient = true;
             }
 
             if (null == errorCounter)
             {
-                throw new IllegalStateException("error counter must be supplied");
+                errorCounter = aeron.addCounter(SYSTEM_COUNTER_TYPE_ID, "Cluster errors - service " + serviceId);
             }
 
             if (null == countedErrorHandler)
@@ -513,12 +520,6 @@ public final class ClusteredServiceContainer implements AutoCloseable
                 .ownsAeronClient(false)
                 .lock(new NoOpLock());
 
-
-            if (null == recordingLog)
-            {
-                recordingLog = new RecordingLog(clusteredServiceDir);
-            }
-
             if (null == shutdownSignalBarrier)
             {
                 shutdownSignalBarrier = new ShutdownSignalBarrier();
@@ -534,13 +535,13 @@ public final class ClusteredServiceContainer implements AutoCloseable
                 final String className = System.getProperty(Configuration.SERVICE_CLASS_NAME_PROP_NAME);
                 if (null == className)
                 {
-                    throw new IllegalStateException(
-                        "Either a ClusteredService instance or class name for the service must be provided");
+                    throw new ClusterException(
+                        "either a ClusteredService instance or class name for the service must be provided");
                 }
 
                 try
                 {
-                    clusteredService = (ClusteredService)Class.forName(className).newInstance();
+                    clusteredService = (ClusteredService)Class.forName(className).getConstructor().newInstance();
                 }
                 catch (final Exception ex)
                 {
@@ -552,7 +553,7 @@ public final class ClusteredServiceContainer implements AutoCloseable
         }
 
         /**
-         * Set the id for this clustered service.
+         * Set the id for this clustered service. Services should be numbered from 0 and be contiguous.
          *
          * @param serviceId for this clustered service.
          * @return this for a fluent API
@@ -565,7 +566,7 @@ public final class ClusteredServiceContainer implements AutoCloseable
         }
 
         /**
-         * Get the id for this clustered service.
+         * Get the id for this clustered service.Services should be numbered from 0 and be contiguous.
          *
          * @return the id for this clustered service.
          * @see Configuration#SERVICE_ID_PROP_NAME
@@ -576,9 +577,9 @@ public final class ClusteredServiceContainer implements AutoCloseable
         }
 
         /**
-         * Set the name for a clustered service to be the role of the {@link Agent}.
+         * Set the name for a clustered service to be the {@link Agent#roleName()} for the {@link Agent}.
          *
-         * @param serviceName for a clustered service to be the role of the {@link Agent}.
+         * @param serviceName for a clustered service to be the role for the {@link Agent}.
          * @return this for a fluent API.
          * @see Configuration#SERVICE_NAME_PROP_NAME
          */
@@ -589,7 +590,7 @@ public final class ClusteredServiceContainer implements AutoCloseable
         }
 
         /**
-         * Get the name for a clustered service to be the role of the {@link Agent}.
+         * Get the name for a clustered service to be the {@link Agent#roleName()} for the {@link Agent}.
          *
          * @return the name for a clustered service to be the role of the {@link Agent}.
          * @see Configuration#SERVICE_NAME_PROP_NAME
@@ -672,27 +673,51 @@ public final class ClusteredServiceContainer implements AutoCloseable
         }
 
         /**
-         * Set the stream id for bi-directional communications between the consensus module and services.
+         * Set the stream id for communications from the consensus module and to the services.
          *
-         * @param streamId for bi-directional communications between the consensus module and services.
+         * @param streamId for communications from the consensus module and to the services.
          * @return this for a fluent API
-         * @see Configuration#SERVICE_CONTROL_STREAM_ID_PROP_NAME
+         * @see Configuration#SERVICE_STREAM_ID_PROP_NAME
          */
-        public Context serviceControlStreamId(final int streamId)
+        public Context serviceStreamId(final int streamId)
         {
-            serviceControlStreamId = streamId;
+            serviceStreamId = streamId;
             return this;
         }
 
         /**
-         * Get the stream id for bi-directional communications between the consensus module and services.
+         * Get the stream id for communications from the consensus module and to the services.
          *
-         * @return the stream id for bi-directional communications between the consensus module and services.
-         * @see Configuration#SERVICE_CONTROL_STREAM_ID_PROP_NAME
+         * @return the stream id for communications from the consensus module and to the services.
+         * @see Configuration#SERVICE_STREAM_ID_PROP_NAME
          */
-        public int serviceControlStreamId()
+        public int serviceStreamId()
         {
-            return serviceControlStreamId;
+            return serviceStreamId;
+        }
+
+        /**
+         * Set the stream id for communications from the services to the consensus module.
+         *
+         * @param streamId for communications from the services to the consensus module.
+         * @return this for a fluent API
+         * @see Configuration#CONSENSUS_MODULE_STREAM_ID_PROP_NAME
+         */
+        public Context consensusModuleStreamId(final int streamId)
+        {
+            consensusModuleStreamId = streamId;
+            return this;
+        }
+
+        /**
+         * Get the stream id for communications from the services to the consensus module.
+         *
+         * @return the stream id for communications from the services to the consensus module.
+         * @see Configuration#CONSENSUS_MODULE_STREAM_ID_PROP_NAME
+         */
+        public int consensusModuleStreamId()
+        {
+            return consensusModuleStreamId;
         }
 
         /**
@@ -988,95 +1013,51 @@ public final class ClusteredServiceContainer implements AutoCloseable
         }
 
         /**
-         * Should the container attempt to immediately delete {@link #clusteredServiceDir()} on startup.
+         * Set the directory name to use for the consensus module directory.
          *
-         * @param deleteDirOnStart Attempt deletion.
+         * @param clusterDirectoryName to use.
          * @return this for a fluent API.
+         * @see Configuration#CLUSTER_DIR_PROP_NAME
          */
-        public Context deleteDirOnStart(final boolean deleteDirOnStart)
+        public Context clusterDirectoryName(final String clusterDirectoryName)
         {
-            this.deleteDirOnStart = deleteDirOnStart;
+            this.clusterDirectoryName = clusterDirectoryName;
             return this;
         }
 
         /**
-         * Will the container attempt to immediately delete {@link #clusteredServiceDir()} on startup.
+         * The directory name to use for the cluster directory.
          *
-         * @return true when directory will be deleted, otherwise false.
+         * @return directory name for the cluster directory.
+         * @see Configuration#CLUSTER_DIR_PROP_NAME
          */
-        public boolean deleteDirOnStart()
+        public String clusterDirectoryName()
         {
-            return deleteDirOnStart;
+            return clusterDirectoryName;
         }
 
         /**
-         * Set the directory name to use for the clustered service container.
+         * Set the directory to use for the cluster directory.
          *
-         * @param clusteredServiceDirectoryName to use.
+         * @param clusterDir to use.
          * @return this for a fluent API.
-         * @see Configuration#CLUSTERED_SERVICE_DIR_PROP_NAME
+         * @see ClusteredServiceContainer.Configuration#CLUSTER_DIR_PROP_NAME
          */
-        public Context clusteredServiceDirectoryName(final String clusteredServiceDirectoryName)
+        public Context clusterDir(final File clusterDir)
         {
-            this.clusteredServiceDirectoryName = clusteredServiceDirectoryName;
+            this.clusterDir = clusterDir;
             return this;
         }
 
         /**
-         * The directory name used for the clustered service container.
+         * The directory used for for the cluster directory.
          *
-         * @return directory for the cluster container.
-         * @see Configuration#CLUSTERED_SERVICE_DIR_PROP_NAME
+         * @return directory for for the cluster directory.
+         * @see ClusteredServiceContainer.Configuration#CLUSTER_DIR_PROP_NAME
          */
-        public String clusteredServiceDirectoryName()
+        public File clusterDir()
         {
-            return clusteredServiceDirectoryName;
-        }
-
-        /**
-         * Set the directory to use for the clustered service container.
-         *
-         * @param dir to use.
-         * @return this for a fluent API.
-         * @see Configuration#CLUSTERED_SERVICE_DIR_PROP_NAME
-         */
-        public Context clusteredServiceDir(final File dir)
-        {
-            this.clusteredServiceDir = dir;
-            return this;
-        }
-
-        /**
-         * The directory used for the clustered service container.
-         *
-         * @return directory for the cluster container.
-         * @see Configuration#CLUSTERED_SERVICE_DIR_PROP_NAME
-         */
-        public File clusteredServiceDir()
-        {
-            return clusteredServiceDir;
-        }
-
-        /**
-         * Set the {@link RecordingLog} for the  log terms and snapshots.
-         *
-         * @param recordingLog to use.
-         * @return this for a fluent API.
-         */
-        public Context recordingLog(final RecordingLog recordingLog)
-        {
-            this.recordingLog = recordingLog;
-            return this;
-        }
-
-        /**
-         * The {@link RecordingLog} for the  log terms and snapshots.
-         *
-         * @return {@link RecordingLog} for the  log terms and snapshots.
-         */
-        public RecordingLog recordingLog()
-        {
-            return recordingLog;
+            return clusterDir;
         }
 
         /**
@@ -1198,9 +1179,9 @@ public final class ClusteredServiceContainer implements AutoCloseable
          */
         public void deleteDirectory()
         {
-            if (null != clusteredServiceDir)
+            if (null != clusterDir)
             {
-                IoUtil.delete(clusteredServiceDir, false);
+                IoUtil.delete(clusterDir, false);
             }
         }
 
@@ -1233,9 +1214,10 @@ public final class ClusteredServiceContainer implements AutoCloseable
 
             encoder
                 .archiveStreamId(archiveContext.controlRequestStreamId())
-                .serviceControlStreamId(serviceControlStreamId)
+                .serviceStreamId(serviceStreamId)
+                .consensusModuleStreamId(consensusModuleStreamId)
                 .ingressStreamId(0)
-                .memberId(-1)
+                .memberId(Aeron.NULL_VALUE)
                 .serviceId(serviceId)
                 .aeronDirectory(aeron.context().aeronDirectoryName())
                 .archiveChannel(archiveContext.controlRequestChannel())

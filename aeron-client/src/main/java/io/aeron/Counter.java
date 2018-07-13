@@ -15,6 +15,7 @@
  */
 package io.aeron;
 
+import io.aeron.exceptions.AeronException;
 import org.agrona.concurrent.AtomicBuffer;
 import org.agrona.concurrent.status.AtomicCounter;
 import org.agrona.concurrent.status.CountersReader;
@@ -44,9 +45,9 @@ public class Counter extends AtomicCounter
      * Construct a read-write view of an existing counter.
      *
      * @param countersReader for getting access to the buffers.
-     * @param registrationId assigned by the driver for the counter or -1 if not known.
+     * @param registrationId assigned by the driver for the counter or {@link Aeron#NULL_VALUE} if not known.
      * @param counterId      for the counter to be viewed.
-     * @throws IllegalStateException if the id has for the counter has not been allocated.
+     * @throws AeronException if the id has for the counter has not been allocated.
      */
     Counter(
         final CountersReader countersReader,
@@ -57,7 +58,7 @@ public class Counter extends AtomicCounter
 
         if (countersReader.getCounterState(counterId) != CountersReader.RECORD_ALLOCATED)
         {
-            throw new IllegalStateException("Counter id has not been allocated: " + counterId);
+            throw new AeronException("Counter id has not been allocated: " + counterId);
         }
 
         this.registrationId = registrationId;

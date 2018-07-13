@@ -22,6 +22,8 @@
 #include <thread>
 #include <atomic>
 #include <concurrent/logbuffer/TermReader.h>
+#include <pthread.h>
+
 
 namespace aeron {
 
@@ -35,8 +37,29 @@ public:
         m_agent(agent),
         m_idleStrategy(idleStrategy),
         m_exceptionHandler(exceptionHandler),
-        m_running(true)
+        m_running(true),
+        m_name("aeron-agent")
     {
+    }
+
+    AgentRunner(
+        Agent& agent, IdleStrategy& idleStrategy, logbuffer::exception_handler_t& exceptionHandler, const std::string& name) :
+        m_agent(agent),
+        m_idleStrategy(idleStrategy),
+        m_exceptionHandler(exceptionHandler),
+        m_running(true),
+        m_name(name)
+    {
+    }
+
+    /**
+     * Name given to the thread running the agent.
+     *
+     * @return the name given to the thread running the agent.
+     */
+    inline const std::string& name() const
+    {
+        return m_name;
     }
 
     /**
@@ -48,6 +71,11 @@ public:
     {
         m_thread = std::thread([&]()
         {
+#if defined(Darwin)
+            pthread_setname_np(m_name.c_str());
+#else
+            pthread_setname_np(pthread_self(), m_name.c_str());
+#endif
             run();
         });
     }
@@ -90,6 +118,9 @@ public:
 
     }
 
+    /**
+     * Close the agent and stop the associated thread from running. This method waits for the thread to join.
+     */
     inline void close()
     {
         m_running = false;
@@ -102,6 +133,7 @@ private:
     logbuffer::exception_handler_t& m_exceptionHandler;
     std::atomic<bool> m_running;
     std::thread m_thread;
+    const std::string m_name;
 };
 
 }}

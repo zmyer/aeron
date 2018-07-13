@@ -15,16 +15,12 @@
  */
 package io.aeron.cluster;
 
-import io.aeron.Aeron;
 import io.aeron.CommonContext;
-import io.aeron.Publication;
-import io.aeron.Subscription;
 import io.aeron.archive.Archive;
 import io.aeron.archive.ArchiveThreadingMode;
 import io.aeron.archive.client.AeronArchive;
 import io.aeron.cluster.client.AeronCluster;
-import io.aeron.cluster.client.EgressAdapter;
-import io.aeron.cluster.client.SessionDecorator;
+import io.aeron.cluster.client.SessionMessageListener;
 import io.aeron.cluster.service.ClientSession;
 import io.aeron.cluster.service.ClusteredServiceContainer;
 import io.aeron.driver.MediaDriver;
@@ -34,8 +30,7 @@ import io.aeron.logbuffer.Header;
 import org.agrona.CloseHelper;
 import org.agrona.DirectBuffer;
 import org.agrona.ExpandableArrayBuffer;
-import org.agrona.IoUtil;
-import org.agrona.concurrent.NoOpLock;
+import org.agrona.collections.MutableInteger;
 import org.junit.*;
 
 import java.io.File;
@@ -61,11 +56,15 @@ public class AppointedLeaderClusterTest
         "aeron:udp?term-length=64k|endpoint=localhost:8020";
 
     private final CountDownLatch latch = new CountDownLatch(MEMBER_COUNT);
-
     private final EchoService[] echoServices = new EchoService[MEMBER_COUNT];
     private ClusteredMediaDriver[] drivers = new ClusteredMediaDriver[MEMBER_COUNT];
     private ClusteredServiceContainer[] containers = new ClusteredServiceContainer[MEMBER_COUNT];
+    private MediaDriver clientMediaDriver;
     private AeronCluster client;
+
+    private final MutableInteger responseCount = new MutableInteger();
+    private final SessionMessageListener sessionMessageListener =
+        (correlationId, clusterSessionId, timestamp, buffer, offset, length, header) -> responseCount.value++;
 
     @Before
     public void before()
@@ -119,24 +118,33 @@ public class AppointedLeaderClusterTest
                 new ClusteredServiceContainer.Context()
                     .aeronDirectoryName(baseDirName)
                     .archiveContext(archiveCtx.clone())
-                    .clusteredServiceDir(new File(baseDirName, "service"))
+                    .clusterDir(new File(baseDirName, "service"))
                     .clusteredService(echoServices[i])
-                    .errorHandler(Throwable::printStackTrace)
-                    .deleteDirOnStart(true));
+                    .errorHandler(Throwable::printStackTrace));
         }
+
+        clientMediaDriver = MediaDriver.launch(
+            new MediaDriver.Context()
+                .aeronDirectoryName(aeronDirName));
 
         client = AeronCluster.connect(
             new AeronCluster.Context()
-                .aeronDirectoryName(aeronDirName + "-0")
+                .sessionMessageListener(sessionMessageListener)
+                .aeronDirectoryName(aeronDirName)
                 .ingressChannel("aeron:udp")
-                .clusterMemberEndpoints("localhost:20110", "localhost:20111", "localhost:20112")
-                .lock(new NoOpLock()));
+                .clusterMemberEndpoints("0=localhost:20110,1=localhost:20111,2=localhost:20112"));
     }
 
     @After
     public void after()
     {
         CloseHelper.close(client);
+        CloseHelper.close(clientMediaDriver);
+
+        if (null != clientMediaDriver)
+        {
+            clientMediaDriver.context().deleteAeronDirectory();
+        }
 
         for (final ClusteredServiceContainer container : containers)
         {
@@ -149,11 +157,7 @@ public class AppointedLeaderClusterTest
 
             if (null != driver)
             {
-                final File directory = driver.mediaDriver().context().aeronDirectory();
-                if (null != directory)
-                {
-                    IoUtil.delete(directory, false);
-                }
+                driver.mediaDriver().context().deleteAeronDirectory();
             }
         }
     }
@@ -165,33 +169,33 @@ public class AppointedLeaderClusterTest
     }
 
     @Test(timeout = 10_000)
-    public void shouldEchoMessagesViaService() throws InterruptedException
+    public void shouldEchoMessagesViaService() throws Exception
     {
-        final Aeron aeron = client.context().aeron();
-        final SessionDecorator sessionDecorator = new SessionDecorator(client.clusterSessionId());
-        final Publication publication = client.ingressPublication();
-
         final ExpandableArrayBuffer msgBuffer = new ExpandableArrayBuffer();
-        final long msgCorrelationId = aeron.nextCorrelationId();
         msgBuffer.putStringWithoutLengthAscii(0, MSG);
-
-        final EchoConsumer consumer = new EchoConsumer(client.egressSubscription());
-        final Thread thread = new Thread(consumer);
-        thread.setName("consumer");
-        thread.setDaemon(true);
-        thread.start();
 
         for (int i = 0; i < MESSAGE_COUNT; i++)
         {
-            while (sessionDecorator.offer(publication, msgCorrelationId, msgBuffer, 0, MSG.length()) < 0)
+            final long msgCorrelationId = client.nextCorrelationId();
+            while (client.offer(msgCorrelationId, msgBuffer, 0, MSG.length()) < 0)
             {
                 TestUtil.checkInterruptedStatus();
                 Thread.yield();
             }
+
+            client.pollEgress();
+        }
+
+        while (responseCount.get() < MESSAGE_COUNT)
+        {
+            TestUtil.checkInterruptedStatus();
+            Thread.yield();
+            client.pollEgress();
         }
 
         latch.await();
 
+        assertThat(responseCount.get(), is(MESSAGE_COUNT));
         for (final EchoService service : echoServices)
         {
             assertThat(service.messageCount(), is(MESSAGE_COUNT));
@@ -214,48 +218,13 @@ public class AppointedLeaderClusterTest
                 .append("localhost:2011").append(i).append(',')
                 .append("localhost:2022").append(i).append(',')
                 .append("localhost:2033").append(i).append(',')
+                .append("localhost:2044").append(i).append(',')
                 .append("localhost:801").append(i).append('|');
         }
 
         builder.setLength(builder.length() - 1);
 
         return builder.toString();
-    }
-
-    static class EchoConsumer extends StubEgressListener implements Runnable
-    {
-        private int messageCount;
-        private final EgressAdapter egressAdapter;
-
-        EchoConsumer(final Subscription egressSubscription)
-        {
-            egressAdapter = new EgressAdapter(this, egressSubscription, 10);
-        }
-
-        public void run()
-        {
-            while (messageCount < MESSAGE_COUNT)
-            {
-                if (egressAdapter.poll() <= 0)
-                {
-                    Thread.yield();
-                }
-            }
-        }
-
-        public void onMessage(
-            final long correlationId,
-            final long clusterSessionId,
-            final long timestamp,
-            final DirectBuffer buffer,
-            final int offset,
-            final int length,
-            final Header header)
-        {
-            assertThat(buffer.getStringWithoutLengthAscii(offset, length), is(MSG));
-
-            messageCount++;
-        }
     }
 
     static class EchoService extends StubClusteredService
@@ -274,7 +243,7 @@ public class AppointedLeaderClusterTest
         }
 
         public void onSessionMessage(
-            final long clusterSessionId,
+            final ClientSession session,
             final long correlationId,
             final long timestampMs,
             final DirectBuffer buffer,
@@ -282,15 +251,12 @@ public class AppointedLeaderClusterTest
             final int length,
             final Header header)
         {
-            final ClientSession session = cluster.getClientSession(clusterSessionId);
-
             while (session.offer(correlationId, buffer, offset, length) < 0)
             {
-                TestUtil.checkInterruptedStatus();
-                Thread.yield();
+                cluster.idle();
             }
 
-            if (++messageCount >= MESSAGE_COUNT)
+            if (++messageCount == MESSAGE_COUNT)
             {
                 latch.countDown();
             }

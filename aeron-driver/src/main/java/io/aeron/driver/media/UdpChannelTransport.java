@@ -16,8 +16,9 @@
 package io.aeron.driver.media;
 
 import io.aeron.driver.Configuration;
-import io.aeron.status.ChannelEndpointStatus;
+import io.aeron.exceptions.AeronException;
 import io.aeron.protocol.HeaderFlyweight;
+import io.aeron.status.ChannelEndpointStatus;
 import org.agrona.CloseHelper;
 import org.agrona.LangUtil;
 import org.agrona.concurrent.UnsafeBuffer;
@@ -25,14 +26,16 @@ import org.agrona.concurrent.errors.DistinctErrorLog;
 import org.agrona.concurrent.status.AtomicCounter;
 
 import java.io.IOException;
-import java.net.*;
+import java.net.InetSocketAddress;
+import java.net.PortUnreachableException;
+import java.net.StandardSocketOptions;
 import java.nio.ByteBuffer;
-import java.nio.channels.ClosedChannelException;
 import java.nio.channels.DatagramChannel;
 import java.nio.channels.SelectionKey;
 
 import static io.aeron.logbuffer.FrameDescriptor.frameVersion;
-import static java.net.StandardSocketOptions.*;
+import static java.net.StandardSocketOptions.SO_RCVBUF;
+import static java.net.StandardSocketOptions.SO_SNDBUF;
 
 public abstract class UdpChannelTransport implements AutoCloseable
 {
@@ -67,9 +70,21 @@ public abstract class UdpChannelTransport implements AutoCloseable
     }
 
     /**
+     * Throw a {@link AeronException} with a message for a send error.
+     *
+     * @param bytesToSend expected to be sent to the network.
+     * @param ex          experienced.
+     * @param destination to which the send was addressed.
+     */
+    public static void sendError(final int bytesToSend, final IOException ex, final InetSocketAddress destination)
+    {
+        throw new AeronException("failed to send packet of " + bytesToSend + " bytes to " + destination, ex);
+    }
+
+    /**
      * Create the underlying channel for reading and writing.
      *
-     * @param statusIndicator to set for status
+     * @param statusIndicator to set for error status
      */
     public void openDatagramChannel(final AtomicCounter statusIndicator)
     {
@@ -121,7 +136,10 @@ public abstract class UdpChannelTransport implements AutoCloseable
         }
         catch (final IOException ex)
         {
-            statusIndicator.setOrdered(ChannelEndpointStatus.ERRORED);
+            if (null != statusIndicator)
+            {
+                statusIndicator.setOrdered(ChannelEndpointStatus.ERRORED);
+            }
 
             CloseHelper.quietClose(sendDatagramChannel);
             if (receiveDatagramChannel != sendDatagramChannel)
@@ -132,8 +150,8 @@ public abstract class UdpChannelTransport implements AutoCloseable
             sendDatagramChannel = null;
             receiveDatagramChannel = null;
 
-            throw new RuntimeException(
-                "Channel error: " + ex.getMessage() +
+            throw new AeronException(
+                "channel error - " + ex.getMessage() +
                 " (at " + ex.getStackTrace()[0].toString() + "): " +
                 udpChannel.originalUriString(), ex);
         }
@@ -210,6 +228,11 @@ public abstract class UdpChannelTransport implements AutoCloseable
                 {
                     receiveDatagramChannel.close();
                 }
+
+                if (null != transportPoller)
+                {
+                    transportPoller.selectNowWithoutProcessing();
+                }
             }
             catch (final IOException ex)
             {
@@ -254,6 +277,16 @@ public abstract class UdpChannelTransport implements AutoCloseable
         return isFrameValid;
     }
 
+    @SuppressWarnings("unused")
+    public void sendHook(final ByteBuffer buffer, final InetSocketAddress address)
+    {
+    }
+
+    @SuppressWarnings("unused")
+    public void receiveHook(final UnsafeBuffer buffer, final int length, final InetSocketAddress address)
+    {
+    }
+
     /**
      * Receive a datagram from the media layer.
      *
@@ -267,11 +300,13 @@ public abstract class UdpChannelTransport implements AutoCloseable
         InetSocketAddress address = null;
         try
         {
-            address = (InetSocketAddress)receiveDatagramChannel.receive(buffer);
+            if (receiveDatagramChannel.isOpen())
+            {
+                address = (InetSocketAddress)receiveDatagramChannel.receive(buffer);
+            }
         }
-        catch (final PortUnreachableException | ClosedChannelException ignored)
+        catch (final PortUnreachableException ignored)
         {
-            // do nothing
         }
         catch (final Exception ex)
         {

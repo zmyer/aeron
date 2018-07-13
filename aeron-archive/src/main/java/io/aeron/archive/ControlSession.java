@@ -15,7 +15,9 @@
  */
 package io.aeron.archive;
 
+import io.aeron.Aeron;
 import io.aeron.Publication;
+import io.aeron.archive.client.ArchiveException;
 import io.aeron.archive.codecs.ControlResponseCode;
 import io.aeron.archive.codecs.SourceLocation;
 import org.agrona.CloseHelper;
@@ -25,15 +27,12 @@ import org.agrona.concurrent.UnsafeBuffer;
 import java.util.ArrayDeque;
 import java.util.function.BooleanSupplier;
 
+import static io.aeron.archive.client.ArchiveException.GENERIC;
 import static io.aeron.archive.codecs.ControlResponseCode.*;
 
 /**
- * Control sessions are interacted with from both the {@link ArchiveConductor} and the replay
- * {@link SessionWorker}s. The interaction may result in pending send actions being queued for execution by the
- * {@link ArchiveConductor}.
- * This complexity reflects the fact that replay/record/list requests happen in the context of a session, and that they
- * share the sessions request/reply channels. The relationship does not imply a lifecycle dependency however. A
- * {@link RecordingSession}/{@link ReplaySession} can outlive their 'parent' {@link ControlSession}.
+ * Control sessions are interacted with from the {@link ArchiveConductor}. The interaction may result in pending
+ * send actions being queued for execution by the {@link ArchiveConductor}.
  */
 class ControlSession implements Session
 {
@@ -43,7 +42,6 @@ class ControlSession implements Session
     }
 
     static final long TIMEOUT_MS = 5000L;
-    private static final int NULL_DEADLINE = -1;
 
     private final ArchiveConductor conductor;
     private final EpochClock epochClock;
@@ -129,6 +127,11 @@ class ControlSession implements Session
         conductor.stopRecording(correlationId, this, streamId, channel);
     }
 
+    public void onStopRecordingSubscription(final long correlationId, final long subscriptionId)
+    {
+        conductor.stopRecordingSubscription(correlationId, this, subscriptionId);
+    }
+
     public void onStartRecording(
         final long correlationId, final String channel, final int streamId, final SourceLocation sourceLocation)
     {
@@ -208,7 +211,7 @@ class ControlSession implements Session
     {
         if (listRecordingsSession != activeListRecordingsSession)
         {
-            throw new IllegalStateException();
+            throw new ArchiveException();
         }
 
         activeListRecordingsSession = null;
@@ -226,7 +229,7 @@ class ControlSession implements Session
     {
         if (!proxy.sendResponse(controlSessionId, correlationId, relevantId, OK, null, controlPublication))
         {
-            queueResponse(correlationId, 0, OK, null);
+            queueResponse(correlationId, relevantId, OK, null);
         }
     }
 
@@ -244,21 +247,32 @@ class ControlSession implements Session
         }
     }
 
-    void sendResponse(
-        final long correlationId,
-        final ControlResponseCode code,
-        final String errorMessage,
-        final ControlResponseProxy proxy)
+    void sendErrorResponse(final long correlationId, final String errorMessage, final ControlResponseProxy proxy)
     {
-        if (!proxy.sendResponse(controlSessionId, correlationId, 0, code, errorMessage, controlPublication))
+        if (!proxy.sendResponse(controlSessionId, correlationId, 0, ERROR, errorMessage, controlPublication))
         {
-            queueResponse(correlationId, 0, code, errorMessage);
+            queueResponse(correlationId, 0, ERROR, errorMessage);
+        }
+    }
+
+    void sendErrorResponse(
+        final long correlationId, final long relevantId, final String errorMessage, final ControlResponseProxy proxy)
+    {
+        if (!proxy.sendResponse(controlSessionId, correlationId, relevantId, ERROR, errorMessage, controlPublication))
+        {
+            queueResponse(correlationId, relevantId, ERROR, errorMessage);
         }
     }
 
     void attemptErrorResponse(final long correlationId, final String errorMessage, final ControlResponseProxy proxy)
     {
-        proxy.attemptErrorResponse(controlSessionId, correlationId, errorMessage, controlPublication);
+        proxy.attemptErrorResponse(controlSessionId, GENERIC, correlationId, errorMessage, controlPublication);
+    }
+
+    void attemptErrorResponse(
+        final long correlationId, final long relevantId, final String errorMessage, final ControlResponseProxy proxy)
+    {
+        proxy.attemptErrorResponse(controlSessionId, correlationId, relevantId, errorMessage, controlPublication);
     }
 
     int sendDescriptor(final long correlationId, final UnsafeBuffer descriptorBuffer, final ControlResponseProxy proxy)
@@ -299,10 +313,10 @@ class ControlSession implements Session
                 if (sendFirst(queuedResponses))
                 {
                     queuedResponses.pollFirst();
-                    activityDeadlineMs = NULL_DEADLINE;
+                    activityDeadlineMs = Aeron.NULL_VALUE;
                     workCount++;
                 }
-                else if (activityDeadlineMs == NULL_DEADLINE)
+                else if (activityDeadlineMs == Aeron.NULL_VALUE)
                 {
                     activityDeadlineMs = epochClock.time() + TIMEOUT_MS;
                 }
@@ -324,13 +338,13 @@ class ControlSession implements Session
     private int waitForConnection()
     {
         int workCount = 0;
-        if (activityDeadlineMs == NULL_DEADLINE)
+        if (activityDeadlineMs == Aeron.NULL_VALUE)
         {
             activityDeadlineMs = epochClock.time() + TIMEOUT_MS;
         }
         else if (controlPublication.isConnected())
         {
-            activityDeadlineMs = NULL_DEADLINE;
+            activityDeadlineMs = Aeron.NULL_VALUE;
             state = State.ACTIVE;
             sendConnectResponse();
             workCount += 1;
@@ -345,7 +359,7 @@ class ControlSession implements Session
 
     private boolean hasGoneInactive()
     {
-        return activityDeadlineMs != NULL_DEADLINE && epochClock.time() > activityDeadlineMs;
+        return activityDeadlineMs != Aeron.NULL_VALUE && epochClock.time() > activityDeadlineMs;
     }
 
     private void queueResponse(

@@ -29,8 +29,6 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.PortUnreachableException;
 import java.nio.ByteBuffer;
-import java.nio.channels.ClosedChannelException;
-import java.nio.channels.NotYetConnectedException;
 import java.util.concurrent.TimeUnit;
 
 import static io.aeron.status.ChannelEndpointStatus.status;
@@ -41,7 +39,6 @@ import static io.aeron.protocol.StatusMessageFlyweight.SEND_SETUP_FLAG;
  * Aggregator of multiple {@link NetworkPublication}s onto a single transport channel for
  * sending data and setup frames plus the receiving of status and NAK frames.
  */
-@EventLog
 public class SendChannelEndpoint extends UdpChannelTransport
 {
     private static final long DESTINATION_TIMEOUT = TimeUnit.SECONDS.toNanos(5);
@@ -131,7 +128,7 @@ public class SendChannelEndpoint extends UdpChannelTransport
         if (currentStatus != ChannelEndpointStatus.INITIALIZING)
         {
             throw new IllegalStateException(
-                "Channel cannot be registered unless INITALIZING: status=" + status(currentStatus));
+                "channel cannot be registered unless INITALIZING: status=" + status(currentStatus));
         }
 
         statusIndicator.setOrdered(ChannelEndpointStatus.ACTIVE);
@@ -195,16 +192,18 @@ public class SendChannelEndpoint extends UdpChannelTransport
             {
                 try
                 {
-                    presend(buffer, connectAddress);
-                    bytesSent = sendDatagramChannel.write(buffer);
+                    sendHook(buffer, connectAddress);
+                    if (sendDatagramChannel.isConnected())
+                    {
+                        bytesSent = sendDatagramChannel.write(buffer);
+                    }
                 }
-                catch (final PortUnreachableException | ClosedChannelException | NotYetConnectedException ignore)
+                catch (final PortUnreachableException ignore)
                 {
                 }
                 catch (final IOException ex)
                 {
-                    throw new RuntimeException(
-                        "Failed to send packet of " + bytesToSend + " bytes to " + connectAddress, ex);
+                    sendError(bytesToSend, ex, connectAddress);
                 }
             }
             else
@@ -214,17 +213,6 @@ public class SendChannelEndpoint extends UdpChannelTransport
         }
 
         return bytesSent;
-    }
-
-    /**
-     * Method used as a hook for logging.
-     *
-     * @param buffer  to be sent
-     * @param address to which the buffer will be sent.
-     */
-    @SuppressWarnings("unused")
-    protected void presend(final ByteBuffer buffer, final InetSocketAddress address)
-    {
     }
 
     public void onStatusMessage(
@@ -296,7 +284,7 @@ public class SendChannelEndpoint extends UdpChannelTransport
     {
         if (null == multiDestination || !multiDestination.isManualControlMode())
         {
-            throw new IllegalArgumentException("Control channel does not allow manual control");
+            throw new IllegalArgumentException("control channel does not allow manual control");
         }
     }
 

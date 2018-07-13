@@ -17,13 +17,19 @@ package io.aeron.cluster;
 
 import io.aeron.Publication;
 import io.aeron.cluster.codecs.*;
+import io.aeron.exceptions.AeronException;
 import io.aeron.logbuffer.BufferClaim;
-import org.agrona.DirectBuffer;
+import org.agrona.ExpandableArrayBuffer;
+
+import java.util.ArrayList;
+
+import static io.aeron.Aeron.NULL_VALUE;
 
 class MemberStatusPublisher
 {
     private static final int SEND_ATTEMPTS = 3;
 
+    private final ExpandableArrayBuffer buffer = new ExpandableArrayBuffer();
     private final BufferClaim bufferClaim = new BufferClaim();
     private final MessageHeaderEncoder messageHeaderEncoder = new MessageHeaderEncoder();
     private final CanvassPositionEncoder canvassPositionEncoder = new CanvassPositionEncoder();
@@ -32,11 +38,18 @@ class MemberStatusPublisher
     private final NewLeadershipTermEncoder newLeadershipTermEncoder = new NewLeadershipTermEncoder();
     private final AppendedPositionEncoder appendedPositionEncoder = new AppendedPositionEncoder();
     private final CommitPositionEncoder commitPositionEncoder = new CommitPositionEncoder();
-    private final QueryResponseEncoder queryResponseEncoder = new QueryResponseEncoder();
+    private final CatchupPositionEncoder catchupPositionEncoder = new CatchupPositionEncoder();
+    private final StopCatchupEncoder stopCatchupEncoder = new StopCatchupEncoder();
     private final RecoveryPlanQueryEncoder recoveryPlanQueryEncoder = new RecoveryPlanQueryEncoder();
+    private final RecoveryPlanEncoder recoveryPlanEncoder = new RecoveryPlanEncoder();
+    private final RecordingLogQueryEncoder recordingLogQueryEncoder = new RecordingLogQueryEncoder();
+    private final RecordingLogEncoder recordingLogEncoder = new RecordingLogEncoder();
 
-    public boolean canvassPosition(
-        final Publication publication, final long logPosition, final long leadershipTermId, final int followerMemberId)
+    boolean canvassPosition(
+        final Publication publication,
+        final long logLeadershipTermId,
+        final long logPosition,
+        final int followerMemberId)
     {
         final int length = MessageHeaderEncoder.ENCODED_LENGTH + CanvassPositionEncoder.BLOCK_LENGTH;
 
@@ -48,8 +61,8 @@ class MemberStatusPublisher
             {
                 canvassPositionEncoder
                     .wrapAndApplyHeader(bufferClaim.buffer(), bufferClaim.offset(), messageHeaderEncoder)
+                    .logLeadershipTermId(logLeadershipTermId)
                     .logPosition(logPosition)
-                    .leadershipTermId(leadershipTermId)
                     .followerMemberId(followerMemberId);
 
                 bufferClaim.commit();
@@ -64,8 +77,12 @@ class MemberStatusPublisher
         return false;
     }
 
-    public boolean requestVote(
-        final Publication publication, final long logPosition, final long candidateTermId, final int candidateMemberId)
+    boolean requestVote(
+        final Publication publication,
+        final long logLeadershipTermId,
+        final long logPosition,
+        final long candidateTermId,
+        final int candidateMemberId)
     {
         final int length = MessageHeaderEncoder.ENCODED_LENGTH + RequestVoteEncoder.BLOCK_LENGTH;
 
@@ -77,6 +94,7 @@ class MemberStatusPublisher
             {
                 requestVoteEncoder
                     .wrapAndApplyHeader(bufferClaim.buffer(), bufferClaim.offset(), messageHeaderEncoder)
+                    .logLeadershipTermId(logLeadershipTermId)
                     .logPosition(logPosition)
                     .candidateTermId(candidateTermId)
                     .candidateMemberId(candidateMemberId);
@@ -93,9 +111,11 @@ class MemberStatusPublisher
         return false;
     }
 
-    public boolean placeVote(
+    boolean placeVote(
         final Publication publication,
         final long candidateTermId,
+        final long logLeadershipTermId,
+        final long logPosition,
         final int candidateMemberId,
         final int followerMemberId,
         final boolean vote)
@@ -111,6 +131,8 @@ class MemberStatusPublisher
                 voteEncoder
                     .wrapAndApplyHeader(bufferClaim.buffer(), bufferClaim.offset(), messageHeaderEncoder)
                     .candidateTermId(candidateTermId)
+                    .logLeadershipTermId(logLeadershipTermId)
+                    .logPosition(logPosition)
                     .candidateMemberId(candidateMemberId)
                     .followerMemberId(followerMemberId)
                     .vote(vote ? BooleanType.TRUE : BooleanType.FALSE);
@@ -127,8 +149,9 @@ class MemberStatusPublisher
         return false;
     }
 
-    public boolean newLeadershipTerm(
+    boolean newLeadershipTerm(
         final Publication publication,
+        final long logLeadershipTermId,
         final long logPosition,
         final long leadershipTermId,
         final int leaderMemberId,
@@ -144,6 +167,7 @@ class MemberStatusPublisher
             {
                 newLeadershipTermEncoder
                     .wrapAndApplyHeader(bufferClaim.buffer(), bufferClaim.offset(), messageHeaderEncoder)
+                    .logLeadershipTermId(logLeadershipTermId)
                     .logPosition(logPosition)
                     .leadershipTermId(leadershipTermId)
                     .leaderMemberId(leaderMemberId)
@@ -161,8 +185,8 @@ class MemberStatusPublisher
         return false;
     }
 
-    public boolean appendedPosition(
-        final Publication publication, final long logPosition, final long leadershipTermId, final int followerMemberId)
+    boolean appendedPosition(
+        final Publication publication, final long leadershipTermId, final long logPosition, final int followerMemberId)
     {
         final int length = MessageHeaderEncoder.ENCODED_LENGTH + AppendedPositionEncoder.BLOCK_LENGTH;
 
@@ -174,8 +198,8 @@ class MemberStatusPublisher
             {
                 appendedPositionEncoder
                     .wrapAndApplyHeader(bufferClaim.buffer(), bufferClaim.offset(), messageHeaderEncoder)
-                    .logPosition(logPosition)
                     .leadershipTermId(leadershipTermId)
+                    .logPosition(logPosition)
                     .followerMemberId(followerMemberId);
 
                 bufferClaim.commit();
@@ -190,8 +214,8 @@ class MemberStatusPublisher
         return false;
     }
 
-    public boolean commitPosition(
-        final Publication publication, final long logPosition, final long leadershipTermId, final int leaderMemberId)
+    boolean commitPosition(
+        final Publication publication, final long leadershipTermId, final long logPosition, final int leaderMemberId)
     {
         final int length = MessageHeaderEncoder.ENCODED_LENGTH + CommitPositionEncoder.BLOCK_LENGTH;
 
@@ -203,8 +227,8 @@ class MemberStatusPublisher
             {
                 commitPositionEncoder
                     .wrapAndApplyHeader(bufferClaim.buffer(), bufferClaim.offset(), messageHeaderEncoder)
-                    .logPosition(logPosition)
                     .leadershipTermId(leadershipTermId)
+                    .logPosition(logPosition)
                     .leaderMemberId(leaderMemberId);
 
                 bufferClaim.commit();
@@ -219,19 +243,10 @@ class MemberStatusPublisher
         return false;
     }
 
-    public boolean queryResponse(
-        final Publication publication,
-        final long correlationId,
-        final int requestMemberId,
-        final int responseMemberId,
-        final DirectBuffer dataBuffer,
-        final int dataOffset,
-        final int dataLength)
+    boolean catchupPosition(
+        final Publication publication, final long leadershipTermId, final long logPosition, final int followerMemerId)
     {
-        final int length = MessageHeaderEncoder.ENCODED_LENGTH +
-            QueryResponseEncoder.BLOCK_LENGTH +
-            QueryResponseEncoder.encodedResponseHeaderLength() +
-            dataLength;
+        final int length = MessageHeaderEncoder.ENCODED_LENGTH + CatchupPositionEncoder.BLOCK_LENGTH;
 
         int attempts = SEND_ATTEMPTS;
         do
@@ -239,12 +254,11 @@ class MemberStatusPublisher
             final long result = publication.tryClaim(length, bufferClaim);
             if (result > 0)
             {
-                queryResponseEncoder
+                catchupPositionEncoder
                     .wrapAndApplyHeader(bufferClaim.buffer(), bufferClaim.offset(), messageHeaderEncoder)
-                    .correlationId(correlationId)
-                    .requestMemberId(requestMemberId)
-                    .responseMemberId(responseMemberId)
-                    .putEncodedResponse(dataBuffer, dataOffset, dataLength);
+                    .leadershipTermId(leadershipTermId)
+                    .logPosition(logPosition)
+                    .followerMemberId(followerMemerId);
 
                 bufferClaim.commit();
 
@@ -258,7 +272,35 @@ class MemberStatusPublisher
         return false;
     }
 
-    public boolean recoveryPlanQuery(
+    boolean stopCatchup(
+        final Publication publication, final int replaySessionId, final int followerMemerId)
+    {
+        final int length = MessageHeaderEncoder.ENCODED_LENGTH + StopCatchupEncoder.BLOCK_LENGTH;
+
+        int attempts = SEND_ATTEMPTS;
+        do
+        {
+            final long result = publication.tryClaim(length, bufferClaim);
+            if (result > 0)
+            {
+                stopCatchupEncoder
+                    .wrapAndApplyHeader(bufferClaim.buffer(), bufferClaim.offset(), messageHeaderEncoder)
+                    .replaySessionId(replaySessionId)
+                    .followerMemberId(followerMemerId);
+
+                bufferClaim.commit();
+
+                return true;
+            }
+
+            checkResult(result);
+        }
+        while (--attempts > 0);
+
+        return false;
+    }
+
+    boolean recoveryPlanQuery(
         final Publication publication, final long correlationId, final int leaderMemberId, final int memberId)
     {
         final int length = MessageHeaderEncoder.ENCODED_LENGTH + RecoveryPlanQueryEncoder.BLOCK_LENGTH;
@@ -287,11 +329,132 @@ class MemberStatusPublisher
         return false;
     }
 
+    boolean recoveryPlan(
+        final Publication publication,
+        final long correlationId,
+        final int requestMemberId,
+        final int leaderMemberId,
+        final RecordingLog.RecoveryPlan recoveryPlan)
+    {
+        recoveryPlanEncoder.wrapAndApplyHeader(buffer, 0, messageHeaderEncoder)
+            .correlationId(correlationId)
+            .requestMemberId(requestMemberId)
+            .leaderMemberId(leaderMemberId);
+
+        final int length = MessageHeaderEncoder.ENCODED_LENGTH + recoveryPlan.encode(recoveryPlanEncoder);
+
+        int attempts = SEND_ATTEMPTS;
+        do
+        {
+            final long result = publication.offer(buffer, 0, length);
+            if (result > 0)
+            {
+                return true;
+            }
+
+            checkResult(result);
+        }
+        while (--attempts > 0);
+
+        return false;
+    }
+
+    boolean recordingLogQuery(
+        final Publication publication,
+        final long correlationId,
+        final int leaderMemberId,
+        final int memberId,
+        final long fromLeadershipTermId,
+        final int count,
+        final boolean includeSnapshots)
+    {
+        final int length = MessageHeaderEncoder.ENCODED_LENGTH + RecordingLogQueryEncoder.BLOCK_LENGTH;
+
+        int attempts = SEND_ATTEMPTS;
+        do
+        {
+            final long result = publication.tryClaim(length, bufferClaim);
+            if (result > 0)
+            {
+                recordingLogQueryEncoder
+                    .wrapAndApplyHeader(bufferClaim.buffer(), bufferClaim.offset(), messageHeaderEncoder)
+                    .correlationId(correlationId)
+                    .leaderMemberId(leaderMemberId)
+                    .requestMemberId(memberId)
+                    .fromLeadershipTermId(fromLeadershipTermId)
+                    .count(count)
+                    .includeSnapshots(includeSnapshots ? BooleanType.TRUE : BooleanType.FALSE);
+
+                bufferClaim.commit();
+
+                return true;
+            }
+
+            checkResult(result);
+        }
+        while (--attempts > 0);
+
+        return false;
+    }
+
+    boolean recordingLog(
+        final Publication publication,
+        final long correlationId,
+        final int requestMemberId,
+        final int leaderMemberId,
+        final RecordingLog recordingLog,
+        final long fromLeadershipTermId,
+        final int count,
+        final boolean includeSnapshots)
+    {
+        recordingLogEncoder.wrapAndApplyHeader(buffer, 0, messageHeaderEncoder)
+            .correlationId(correlationId)
+            .requestMemberId(requestMemberId)
+            .leaderMemberId(leaderMemberId);
+
+        final ArrayList<RecordingLog.Entry> results = new ArrayList<>();
+        recordingLog.findEntries(fromLeadershipTermId, count, includeSnapshots, results);
+
+        final int resultsSize = results.size();
+        final RecordingLogEncoder.EntriesEncoder entriesEncoder = recordingLogEncoder.entriesCount(resultsSize);
+        for (int i = 0; i < resultsSize; i++)
+        {
+            final RecordingLog.Entry entry = results.get(i);
+
+            entriesEncoder.next()
+                .recordingId(entry.recordingId)
+                .leadershipTermId(entry.leadershipTermId)
+                .termBaseLogPosition(entry.termBaseLogPosition)
+                .logPosition(entry.logPosition)
+                .timestamp(entry.timestamp)
+                .serviceId(entry.serviceId)
+                .entryType(entry.type)
+                .isCurrent(NULL_VALUE == entry.logPosition ? BooleanType.TRUE : BooleanType.FALSE);
+        }
+
+        final int length = MessageHeaderEncoder.ENCODED_LENGTH + recordingLogEncoder.encodedLength();
+
+        int attempts = SEND_ATTEMPTS;
+        do
+        {
+            final long result = publication.offer(buffer, 0, length);
+            if (result > 0)
+            {
+                return true;
+            }
+
+            checkResult(result);
+        }
+        while (--attempts > 0);
+
+        return false;
+    }
+
     private static void checkResult(final long result)
     {
         if (result == Publication.CLOSED || result == Publication.MAX_POSITION_EXCEEDED)
         {
-            throw new IllegalStateException("unexpected publication state: " + result);
+            throw new AeronException("unexpected publication state: " + result);
         }
     }
 }

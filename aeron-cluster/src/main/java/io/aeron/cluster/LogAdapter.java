@@ -22,7 +22,7 @@ import io.aeron.logbuffer.ControlledFragmentHandler;
 import io.aeron.logbuffer.Header;
 import org.agrona.DirectBuffer;
 
-final class LogAdapter implements ControlledFragmentHandler
+final class LogAdapter implements ControlledFragmentHandler, AutoCloseable
 {
     /**
      * Length of the session header that will precede application protocol message.
@@ -34,18 +34,24 @@ final class LogAdapter implements ControlledFragmentHandler
 
     private final ImageControlledFragmentAssembler fragmentAssembler = new ImageControlledFragmentAssembler(this);
     private final Image image;
-    private final SequencerAgent sequencerAgent;
+    private final ConsensusModuleAgent consensusModuleAgent;
     private final MessageHeaderDecoder messageHeaderDecoder = new MessageHeaderDecoder();
-    private final SessionOpenEventDecoder openEventDecoder = new SessionOpenEventDecoder();
-    private final SessionCloseEventDecoder closeEventDecoder = new SessionCloseEventDecoder();
+    private final SessionOpenEventDecoder sessionOpenEventDecoder = new SessionOpenEventDecoder();
+    private final SessionCloseEventDecoder sessionCloseEventDecoder = new SessionCloseEventDecoder();
     private final SessionHeaderDecoder sessionHeaderDecoder = new SessionHeaderDecoder();
     private final TimerEventDecoder timerEventDecoder = new TimerEventDecoder();
-    private final ClusterActionRequestDecoder actionRequestDecoder = new ClusterActionRequestDecoder();
+    private final ClusterActionRequestDecoder clusterActionRequestDecoder = new ClusterActionRequestDecoder();
+    private final NewLeadershipTermEventDecoder newLeadershipTermEventDecoder = new NewLeadershipTermEventDecoder();
 
-    LogAdapter(final Image image, final SequencerAgent sequencerAgent)
+    LogAdapter(final Image image, final ConsensusModuleAgent consensusModuleAgent)
     {
         this.image = image;
-        this.sequencerAgent = sequencerAgent;
+        this.consensusModuleAgent = consensusModuleAgent;
+    }
+
+    public void close()
+    {
+        image.subscription().close();
     }
 
     long position()
@@ -58,30 +64,51 @@ final class LogAdapter implements ControlledFragmentHandler
         return image.boundedControlledPoll(fragmentAssembler, boundPosition, FRAGMENT_LIMIT);
     }
 
+    boolean isImageClosed()
+    {
+        return image.isClosed();
+    }
+
+    Image image()
+    {
+        return image;
+    }
+
+    void removeDestination(final String destination)
+    {
+        if (null != image)
+        {
+            image.subscription().removeDestination(destination);
+        }
+    }
+
     public Action onFragment(final DirectBuffer buffer, final int offset, final int length, final Header header)
     {
         messageHeaderDecoder.wrap(buffer, offset);
-
         final int templateId = messageHeaderDecoder.templateId();
+
+        if (templateId == SessionHeaderDecoder.TEMPLATE_ID)
+        {
+            sessionHeaderDecoder.wrap(
+                buffer,
+                offset + MessageHeaderDecoder.ENCODED_LENGTH,
+                messageHeaderDecoder.blockLength(),
+                messageHeaderDecoder.version());
+
+            consensusModuleAgent.onReplaySessionMessage(
+                sessionHeaderDecoder.correlationId(),
+                sessionHeaderDecoder.clusterSessionId(),
+                sessionHeaderDecoder.timestamp(),
+                buffer,
+                offset + SESSION_HEADER_LENGTH,
+                length - SESSION_HEADER_LENGTH,
+                header);
+
+            return Action.CONTINUE;
+        }
+
         switch (templateId)
         {
-            case SessionHeaderDecoder.TEMPLATE_ID:
-                sessionHeaderDecoder.wrap(
-                    buffer,
-                    offset + MessageHeaderDecoder.ENCODED_LENGTH,
-                    messageHeaderDecoder.blockLength(),
-                    messageHeaderDecoder.version());
-
-                sequencerAgent.onReplaySessionMessage(
-                    sessionHeaderDecoder.correlationId(),
-                    sessionHeaderDecoder.clusterSessionId(),
-                    sessionHeaderDecoder.timestamp(),
-                    buffer,
-                    offset + SESSION_HEADER_LENGTH,
-                    length - SESSION_HEADER_LENGTH,
-                    header);
-                break;
-
             case TimerEventDecoder.TEMPLATE_ID:
                 timerEventDecoder.wrap(
                     buffer,
@@ -89,53 +116,68 @@ final class LogAdapter implements ControlledFragmentHandler
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                sequencerAgent.onReplayTimerEvent(
+                consensusModuleAgent.onReplayTimerEvent(
                     timerEventDecoder.correlationId(),
                     timerEventDecoder.timestamp());
                 break;
 
             case SessionOpenEventDecoder.TEMPLATE_ID:
-                openEventDecoder.wrap(
+                sessionOpenEventDecoder.wrap(
                     buffer,
                     offset + MessageHeaderDecoder.ENCODED_LENGTH,
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                sequencerAgent.onReplaySessionOpen(
+                consensusModuleAgent.onReplaySessionOpen(
                     header.position(),
-                    openEventDecoder.correlationId(),
-                    openEventDecoder.clusterSessionId(),
-                    openEventDecoder.timestamp(),
-                    openEventDecoder.responseStreamId(),
-                    openEventDecoder.responseChannel());
+                    sessionOpenEventDecoder.correlationId(),
+                    sessionOpenEventDecoder.clusterSessionId(),
+                    sessionOpenEventDecoder.timestamp(),
+                    sessionOpenEventDecoder.responseStreamId(),
+                    sessionOpenEventDecoder.responseChannel());
                 break;
 
             case SessionCloseEventDecoder.TEMPLATE_ID:
-                closeEventDecoder.wrap(
+                sessionCloseEventDecoder.wrap(
                     buffer,
                     offset + MessageHeaderDecoder.ENCODED_LENGTH,
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                sequencerAgent.onReplaySessionClose(
-                    closeEventDecoder.correlationId(),
-                    closeEventDecoder.clusterSessionId(),
-                    closeEventDecoder.timestamp(),
-                    closeEventDecoder.closeReason());
+                consensusModuleAgent.onReplaySessionClose(
+                    sessionCloseEventDecoder.correlationId(),
+                    sessionCloseEventDecoder.clusterSessionId(),
+                    sessionCloseEventDecoder.timestamp(),
+                    sessionCloseEventDecoder.closeReason());
+                break;
+
+            case NewLeadershipTermEventDecoder.TEMPLATE_ID:
+                newLeadershipTermEventDecoder.wrap(
+                    buffer,
+                    offset + MessageHeaderDecoder.ENCODED_LENGTH,
+                    messageHeaderDecoder.blockLength(),
+                    messageHeaderDecoder.version());
+
+                consensusModuleAgent.onReplayNewLeadershipTermEvent(
+                    newLeadershipTermEventDecoder.leadershipTermId(),
+                    newLeadershipTermEventDecoder.logPosition(),
+                    newLeadershipTermEventDecoder.timestamp(),
+                    newLeadershipTermEventDecoder.leaderMemberId(),
+                    newLeadershipTermEventDecoder.logSessionId());
                 break;
 
             case ClusterActionRequestDecoder.TEMPLATE_ID:
-                actionRequestDecoder.wrap(
+                clusterActionRequestDecoder.wrap(
                     buffer,
                     offset + MessageHeaderDecoder.ENCODED_LENGTH,
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                sequencerAgent.onReplayClusterAction(
-                    actionRequestDecoder.logPosition(),
-                    actionRequestDecoder.leadershipTermId(),
-                    actionRequestDecoder.timestamp(),
-                    actionRequestDecoder.action());
+                consensusModuleAgent.onReplayClusterAction(
+                    clusterActionRequestDecoder.leadershipTermId(),
+                    clusterActionRequestDecoder.logPosition(),
+                    clusterActionRequestDecoder.timestamp(),
+                    clusterActionRequestDecoder.action());
                 return Action.BREAK;
         }
 

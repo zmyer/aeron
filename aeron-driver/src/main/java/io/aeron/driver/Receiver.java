@@ -15,18 +15,21 @@
  */
 package io.aeron.driver;
 
-import io.aeron.driver.cmd.ReceiverCmd;
 import io.aeron.driver.media.DataTransportPoller;
 import io.aeron.driver.media.ReceiveChannelEndpoint;
+import io.aeron.driver.media.ReceiveDestinationUdpTransport;
+import io.aeron.driver.media.UdpChannel;
+import org.agrona.CloseHelper;
 import org.agrona.collections.ArrayListUtil;
+import org.agrona.collections.ArrayUtil;
 import org.agrona.concurrent.Agent;
-import org.agrona.concurrent.status.AtomicCounter;
 import org.agrona.concurrent.NanoClock;
 import org.agrona.concurrent.OneToOneConcurrentArrayQueue;
+import org.agrona.concurrent.status.AtomicCounter;
 
 import java.net.InetSocketAddress;
+import java.nio.channels.SelectionKey;
 import java.util.ArrayList;
-import java.util.function.Consumer;
 
 import static io.aeron.driver.Configuration.PENDING_SETUPS_TIMEOUT_NS;
 import static io.aeron.driver.status.SystemCounterDescriptor.BYTES_RECEIVED;
@@ -34,10 +37,10 @@ import static io.aeron.driver.status.SystemCounterDescriptor.BYTES_RECEIVED;
 /**
  * Receiver agent for JVM based media driver, uses an event loop with command buffer
  */
-public class Receiver implements Agent, Consumer<ReceiverCmd>
+public class Receiver implements Agent
 {
     private final DataTransportPoller dataTransportPoller;
-    private final OneToOneConcurrentArrayQueue<ReceiverCmd> commandQueue;
+    private final OneToOneConcurrentArrayQueue<Runnable> commandQueue;
     private final AtomicCounter totalBytesReceived;
     private final NanoClock nanoClock;
     private final ArrayList<PublicationImage> publicationImages = new ArrayList<>();
@@ -65,7 +68,7 @@ public class Receiver implements Agent, Consumer<ReceiverCmd>
 
     public int doWork()
     {
-        int workCount = commandQueue.drain(this, Configuration.COMMAND_DRAIN_LIMIT);
+        int workCount = commandQueue.drain(Runnable::run, Configuration.COMMAND_DRAIN_LIMIT);
         final int bytesReceived = dataTransportPoller.pollTransports();
         totalBytesReceived.getAndAddOrdered(bytesReceived);
         final long nowNs = nanoClock.nanoTime();
@@ -95,12 +98,13 @@ public class Receiver implements Agent, Consumer<ReceiverCmd>
     public void addPendingSetupMessage(
         final int sessionId,
         final int streamId,
+        final int transportIndex,
         final ReceiveChannelEndpoint channelEndpoint,
         final boolean periodic,
         final InetSocketAddress controlAddress)
     {
         final PendingSetupMessageFromSource cmd = new PendingSetupMessageFromSource(
-            sessionId, streamId, channelEndpoint, periodic, controlAddress);
+            sessionId, streamId, transportIndex, channelEndpoint, periodic, controlAddress);
 
         cmd.timeOfStatusMessageNs(nanoClock.nanoTime());
         pendingSetupMessages.add(cmd);
@@ -136,19 +140,25 @@ public class Receiver implements Agent, Consumer<ReceiverCmd>
 
     public void onRegisterReceiveChannelEndpoint(final ReceiveChannelEndpoint channelEndpoint)
     {
-        channelEndpoint.openChannel(conductorProxy);
-        channelEndpoint.registerForRead(dataTransportPoller);
-        channelEndpoint.indicateActive();
-
-        if (channelEndpoint.hasExplicitControl())
+        if (!channelEndpoint.hasDestinationControl())
         {
-            addPendingSetupMessage(0, 0, channelEndpoint, true, channelEndpoint.explicitControlAddress());
-            channelEndpoint.sendSetupElicitingStatusMessage(channelEndpoint.explicitControlAddress(), 0, 0);
+            channelEndpoint.openChannel(conductorProxy);
+            channelEndpoint.registerForRead(dataTransportPoller);
+            channelEndpoint.indicateActive();
+
+            if (channelEndpoint.hasExplicitControl())
+            {
+                addPendingSetupMessage(
+                    0, 0, 0, channelEndpoint, true, channelEndpoint.explicitControlAddress());
+                channelEndpoint.sendSetupElicitingStatusMessage(
+                    0, channelEndpoint.explicitControlAddress(), 0, 0);
+            }
         }
     }
 
     public void onCloseReceiveChannelEndpoint(final ReceiveChannelEndpoint channelEndpoint)
     {
+        channelEndpoint.closeMultiRcvDestination();
         channelEndpoint.close();
     }
 
@@ -157,9 +167,54 @@ public class Receiver implements Agent, Consumer<ReceiverCmd>
         channelEndpoint.removeCoolDown(sessionId, streamId);
     }
 
-    public void accept(final ReceiverCmd cmd)
+    public void onAddDestination(
+        final ReceiveChannelEndpoint channelEndpoint, final ReceiveDestinationUdpTransport transport)
     {
-        cmd.execute(this);
+        transport.openChannel();
+
+        final int transportIndex = channelEndpoint.addDestination(transport);
+        final SelectionKey key = dataTransportPoller.registerForRead(channelEndpoint, transport, transportIndex);
+        transport.selectionKey(key);
+
+        if (transport.hasExplicitControl())
+        {
+            addPendingSetupMessage(
+                0, 0, transportIndex, channelEndpoint, true, transport.explicitControlAddress());
+            channelEndpoint.sendSetupElicitingStatusMessage(
+                transportIndex, transport.explicitControlAddress(), 0, 0);
+        }
+
+        for (final PublicationImage image : publicationImages)
+        {
+            if (channelEndpoint == image.channelEndpoint())
+            {
+                image.addDestination(transportIndex, transport);
+            }
+        }
+    }
+
+    public void onRemoveDestination(
+        final ReceiveChannelEndpoint channelEndpoint, final UdpChannel udpChannel)
+    {
+        final int transportIndex = channelEndpoint.destination(udpChannel);
+
+        if (ArrayUtil.UNKNOWN_INDEX != transportIndex)
+        {
+            final ReceiveDestinationUdpTransport transport = channelEndpoint.destination(transportIndex);
+
+            dataTransportPoller.cancelRead(channelEndpoint, transport);
+            channelEndpoint.removeDestination(transportIndex);
+            CloseHelper.close(transport);
+            dataTransportPoller.selectNowWithoutProcessing();
+
+            for (final PublicationImage image : publicationImages)
+            {
+                if (channelEndpoint == image.channelEndpoint())
+                {
+                    image.removeDestination(transportIndex);
+                }
+            }
+        }
     }
 
     private void checkPendingSetupMessages(final long nowNs)
@@ -179,7 +234,7 @@ public class Receiver implements Agent, Consumer<ReceiverCmd>
                 else if (pending.shouldElicitSetupMessage())
                 {
                     pending.channelEndpoint().sendSetupElicitingStatusMessage(
-                        pending.controlAddress(), pending.sessionId(), pending.streamId());
+                        pending.transportIndex(), pending.controlAddress(), pending.sessionId(), pending.streamId());
                     pending.timeOfStatusMessageNs(nowNs);
                 }
             }

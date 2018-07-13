@@ -17,6 +17,7 @@ package io.aeron.cluster;
 
 import io.aeron.FragmentAssembler;
 import io.aeron.Subscription;
+import io.aeron.cluster.client.ClusterException;
 import io.aeron.cluster.codecs.*;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.Header;
@@ -34,9 +35,12 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
     private final NewLeadershipTermDecoder newLeadershipTermDecoder = new NewLeadershipTermDecoder();
     private final AppendedPositionDecoder appendedPositionDecoder = new AppendedPositionDecoder();
     private final CommitPositionDecoder commitPositionDecoder = new CommitPositionDecoder();
-    private final QueryResponseDecoder queryResponseDecoder = new QueryResponseDecoder();
+    private final CatchupPositionDecoder catchupPositionDecoder = new CatchupPositionDecoder();
+    private final StopCatchupDecoder stopCatchupDecoder = new StopCatchupDecoder();
     private final RecoveryPlanQueryDecoder recoveryPlanQueryDecoder = new RecoveryPlanQueryDecoder();
-
+    private final RecoveryPlanDecoder recoveryPlanDecoder = new RecoveryPlanDecoder();
+    private final RecordingLogQueryDecoder recordingLogQueryDecoder = new RecordingLogQueryDecoder();
+    private final RecordingLogDecoder recordingLogDecoder = new RecordingLogDecoder();
     private final FragmentAssembler fragmentAssembler = new FragmentAssembler(this);
     private final Subscription subscription;
     private final MemberStatusListener memberStatusListener;
@@ -73,8 +77,8 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.version());
 
                 memberStatusListener.onCanvassPosition(
+                    canvassPositionDecoder.logLeadershipTermId(),
                     canvassPositionDecoder.logPosition(),
-                    canvassPositionDecoder.leadershipTermId(),
                     canvassPositionDecoder.followerMemberId());
                 break;
 
@@ -86,6 +90,7 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.version());
 
                 memberStatusListener.onRequestVote(
+                    requestVoteDecoder.logLeadershipTermId(),
                     requestVoteDecoder.logPosition(),
                     requestVoteDecoder.candidateTermId(),
                     requestVoteDecoder.candidateMemberId());
@@ -100,6 +105,8 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
 
                 memberStatusListener.onVote(
                     voteDecoder.candidateTermId(),
+                    voteDecoder.logLeadershipTermId(),
+                    voteDecoder.logPosition(),
                     voteDecoder.candidateMemberId(),
                     voteDecoder.followerMemberId(),
                     voteDecoder.vote() == BooleanType.TRUE);
@@ -113,6 +120,7 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.version());
 
                 memberStatusListener.onNewLeadershipTerm(
+                    newLeadershipTermDecoder.logLeadershipTermId(),
                     newLeadershipTermDecoder.logPosition(),
                     newLeadershipTermDecoder.leadershipTermId(),
                     newLeadershipTermDecoder.leaderMemberId(),
@@ -127,8 +135,8 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.version());
 
                 memberStatusListener.onAppendedPosition(
-                    appendedPositionDecoder.logPosition(),
                     appendedPositionDecoder.leadershipTermId(),
+                    appendedPositionDecoder.logPosition(),
                     appendedPositionDecoder.followerMemberId());
                 break;
 
@@ -140,30 +148,34 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.version());
 
                 memberStatusListener.onCommitPosition(
-                    commitPositionDecoder.logPosition(),
                     commitPositionDecoder.leadershipTermId(),
+                    commitPositionDecoder.logPosition(),
                     commitPositionDecoder.leaderMemberId());
                 break;
 
-            case QueryResponseDecoder.TEMPLATE_ID:
-                queryResponseDecoder.wrap(
+            case CatchupPositionDecoder.TEMPLATE_ID:
+                catchupPositionDecoder.wrap(
                     buffer,
                     offset + MessageHeaderDecoder.ENCODED_LENGTH,
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                final int dataOffset = offset +
-                    MessageHeaderDecoder.ENCODED_LENGTH +
-                    QueryResponseDecoder.BLOCK_LENGTH +
-                    QueryResponseDecoder.encodedResponseHeaderLength();
+                memberStatusListener.onCatchupPosition(
+                    catchupPositionDecoder.leadershipTermId(),
+                    catchupPositionDecoder.logPosition(),
+                    catchupPositionDecoder.followerMemberId());
+                break;
 
-                memberStatusListener.onQueryResponse(
-                    queryResponseDecoder.correlationId(),
-                    queryResponseDecoder.requestMemberId(),
-                    queryResponseDecoder.responseMemberId(),
+            case StopCatchupDecoder.TEMPLATE_ID:
+                stopCatchupDecoder.wrap(
                     buffer,
-                    dataOffset,
-                    queryResponseDecoder.encodedResponseLength());
+                    offset + MessageHeaderDecoder.ENCODED_LENGTH,
+                    messageHeaderDecoder.blockLength(),
+                    messageHeaderDecoder.version());
+
+                memberStatusListener.onStopCatchup(
+                    stopCatchupDecoder.replaySessionId(),
+                    stopCatchupDecoder.followerMemberId());
                 break;
 
             case RecoveryPlanQueryDecoder.TEMPLATE_ID:
@@ -175,12 +187,48 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
 
                 memberStatusListener.onRecoveryPlanQuery(
                     recoveryPlanQueryDecoder.correlationId(),
-                    recoveryPlanQueryDecoder.leaderMemberId(),
-                    recoveryPlanQueryDecoder.requestMemberId());
+                    recoveryPlanQueryDecoder.requestMemberId(),
+                    recoveryPlanQueryDecoder.leaderMemberId());
+                break;
+
+            case RecoveryPlanDecoder.TEMPLATE_ID:
+                recoveryPlanDecoder.wrap(
+                    buffer,
+                    offset + MessageHeaderDecoder.ENCODED_LENGTH,
+                    messageHeaderDecoder.blockLength(),
+                    messageHeaderDecoder.version());
+
+                memberStatusListener.onRecoveryPlan(recoveryPlanDecoder);
+                break;
+
+            case RecordingLogQueryDecoder.TEMPLATE_ID:
+                recordingLogQueryDecoder.wrap(
+                    buffer,
+                    offset + MessageHeaderDecoder.ENCODED_LENGTH,
+                    messageHeaderDecoder.blockLength(),
+                    messageHeaderDecoder.version());
+
+                memberStatusListener.onRecordingLogQuery(
+                    recordingLogQueryDecoder.correlationId(),
+                    recordingLogQueryDecoder.requestMemberId(),
+                    recordingLogQueryDecoder.leaderMemberId(),
+                    recordingLogQueryDecoder.fromLeadershipTermId(),
+                    recordingLogQueryDecoder.count(),
+                    recordingLogQueryDecoder.includeSnapshots() == BooleanType.TRUE);
+                break;
+
+            case RecordingLogDecoder.TEMPLATE_ID:
+                recordingLogDecoder.wrap(
+                    buffer,
+                    offset + MessageHeaderDecoder.ENCODED_LENGTH,
+                    messageHeaderDecoder.blockLength(),
+                    messageHeaderDecoder.version());
+
+                memberStatusListener.onRecordingLog(recordingLogDecoder);
                 break;
 
             default:
-                throw new IllegalStateException("unknown template id: " + templateId);
+                throw new ClusterException("unknown template id: " + templateId);
         }
     }
 }

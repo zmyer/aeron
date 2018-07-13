@@ -18,6 +18,7 @@ package io.aeron.cluster;
 import io.aeron.Aeron;
 import io.aeron.ChannelUri;
 import io.aeron.Publication;
+import io.aeron.cluster.client.ClusterException;
 import org.agrona.CloseHelper;
 
 import static io.aeron.CommonContext.ENDPOINT_PARAM_NAME;
@@ -29,20 +30,21 @@ import static io.aeron.archive.client.AeronArchive.NULL_POSITION;
  */
 public final class ClusterMember
 {
-    public static final int NULL_MEMBER_ID = -1;
-
     private boolean isBallotSent;
     private boolean isLeader;
     private final int id;
-    private long leadershipTermId = -1;
+    private long leadershipTermId = Aeron.NULL_VALUE;
     private long logPosition = NULL_POSITION;
+    private long candidateTermId = Aeron.NULL_VALUE;
+    private long catchupReplaySessionId = Aeron.NULL_VALUE;
     private final String clientFacingEndpoint;
     private final String memberFacingEndpoint;
     private final String logEndpoint;
+    private final String transferEndpoint;
     private final String archiveEndpoint;
     private final String endpointsDetail;
     private Publication publication;
-    private Boolean votedFor = null;
+    private Boolean vote = null;
 
     /**
      * Construct a new member of the cluster.
@@ -51,6 +53,7 @@ public final class ClusterMember
      * @param clientFacingEndpoint address and port endpoint to which cluster clients connect.
      * @param memberFacingEndpoint address and port endpoint to which other cluster members connect.
      * @param logEndpoint          address and port endpoint to which the log is replicated.
+     * @param transferEndpoint     address and port endpoint to which a stream is replayed to catchup the leader.
      * @param archiveEndpoint      address and port endpoint to which the archive control channel can be reached.
      * @param endpointsDetail      comma separated list of endpoints.
      */
@@ -59,6 +62,7 @@ public final class ClusterMember
         final String clientFacingEndpoint,
         final String memberFacingEndpoint,
         final String logEndpoint,
+        final String transferEndpoint,
         final String archiveEndpoint,
         final String endpointsDetail)
     {
@@ -66,6 +70,7 @@ public final class ClusterMember
         this.clientFacingEndpoint = clientFacingEndpoint;
         this.memberFacingEndpoint = memberFacingEndpoint;
         this.logEndpoint = logEndpoint;
+        this.transferEndpoint = transferEndpoint;
         this.archiveEndpoint = archiveEndpoint;
         this.endpointsDetail = endpointsDetail;
     }
@@ -77,8 +82,9 @@ public final class ClusterMember
     {
         isBallotSent = false;
         isLeader = false;
-        votedFor = null;
-        leadershipTermId = -1;
+        vote = null;
+        candidateTermId = Aeron.NULL_VALUE;
+        leadershipTermId = Aeron.NULL_VALUE;
         logPosition = NULL_POSITION;
     }
 
@@ -140,12 +146,12 @@ public final class ClusterMember
      * Set the result of the vote for this member. {@link Boolean#TRUE} means they voted for this member,
      * {@link Boolean#FALSE} means they voted against this member, and null means no vote was received.
      *
-     * @param votedFor this member in the election.
+     * @param vote for this member in the election.
      * @return this for a fluent API.
      */
-    public ClusterMember votedFor(final Boolean votedFor)
+    public ClusterMember vote(final Boolean vote)
     {
-        this.votedFor = votedFor;
+        this.vote = vote;
         return this;
     }
 
@@ -155,9 +161,9 @@ public final class ClusterMember
      *
      * @return the status of the vote for this member in an election.
      */
-    public Boolean votedFor()
+    public Boolean vote()
     {
-        return votedFor;
+        return vote;
     }
 
     /**
@@ -205,6 +211,39 @@ public final class ClusterMember
     }
 
     /**
+     * The candidate term id used when voting.
+     *
+     * @param candidateTermId used when voting.
+     * @return this for a fluent API.
+     */
+    public ClusterMember candidateTermId(final long candidateTermId)
+    {
+        this.candidateTermId = candidateTermId;
+        return this;
+    }
+
+    /**
+     * The candidate term id used when voting.
+     *
+     * @return the candidate term id used when voting.
+     */
+    public long candidateTermId()
+    {
+        return candidateTermId;
+    }
+
+    public ClusterMember catchupReplaySessionId(final long replaySessionId)
+    {
+        this.catchupReplaySessionId = replaySessionId;
+        return this;
+    }
+
+    public long catchupReplaySessionId()
+    {
+        return catchupReplaySessionId;
+    }
+
+    /**
      * The address:port endpoint for this cluster member that clients will connect to.
      *
      * @return the address:port endpoint for this cluster member that clients will connect to.
@@ -232,6 +271,16 @@ public final class ClusterMember
     public String logEndpoint()
     {
         return logEndpoint;
+    }
+
+    /**
+     * The address:port endpoint for this cluster member to which a stream is replayed to for leader catchup.
+     *
+     * @return the address:port endpoint for this cluster member to which a stream is replayed to for leader catchup.
+     */
+    public String transferEndpoint()
+    {
+        return transferEndpoint;
     }
 
     /**
@@ -279,7 +328,7 @@ public final class ClusterMember
      * Parse the details for a cluster members from a string.
      * <p>
      * <code>
-     * member-id,client-facing:port,member-facing:port,log:port,archive:port|1,...
+     * member-id,client-facing:port,member-facing:port,log:port,transfer:port,archive:port|1,...
      * </code>
      *
      * @param value of the string to be parsed.
@@ -295,9 +344,9 @@ public final class ClusterMember
         {
             final String endpointsDetail = memberValues[i];
             final String[] memberAttributes = endpointsDetail.split(",");
-            if (memberAttributes.length != 5)
+            if (memberAttributes.length != 6)
             {
-                throw new IllegalStateException("invalid member value: " + endpointsDetail + " within: " + value);
+                throw new ClusterException("invalid member value: " + endpointsDetail + " within: " + value);
             }
 
             members[i] = new ClusterMember(
@@ -306,6 +355,7 @@ public final class ClusterMember
                 memberAttributes[2],
                 memberAttributes[3],
                 memberAttributes[4],
+                memberAttributes[5],
                 endpointsDetail);
         }
 
@@ -424,7 +474,7 @@ public final class ClusterMember
     {
         for (final ClusterMember member : clusterMembers)
         {
-            if (member.votedFor != null && member.logPosition < position && member.leadershipTermId == leadershipTermId)
+            if (member.vote != null && (member.logPosition < position || member.leadershipTermId != leadershipTermId))
             {
                 return false;
             }
@@ -447,17 +497,29 @@ public final class ClusterMember
     }
 
     /**
-     * Become a candidate by voting for yourself and resetting the other votes to {@link #NULL_MEMBER_ID}.
+     * Become a candidate by voting for yourself and resetting the other votes to {@link Aeron#NULL_VALUE}.
      *
      * @param clusterMembers    to reset the votes for.
+     * @param candidateTermId   for the candidacy.
      * @param candidateMemberId for the election.
      */
-    public static void becomeCandidate(final ClusterMember[] clusterMembers, final int candidateMemberId)
+    public static void becomeCandidate(
+        final ClusterMember[] clusterMembers, final long candidateTermId, final int candidateMemberId)
     {
         for (final ClusterMember member : clusterMembers)
         {
-            member.votedFor(member.id == candidateMemberId ? Boolean.TRUE : null);
-            member.isBallotSent(member.id == candidateMemberId);
+            if (member.id == candidateMemberId)
+            {
+                member.vote(Boolean.TRUE)
+                    .candidateTermId(candidateTermId)
+                    .isBallotSent(true);
+            }
+            else
+            {
+                member.vote(null)
+                    .candidateTermId(Aeron.NULL_VALUE)
+                    .isBallotSent(false);
+            }
         }
     }
 
@@ -474,12 +536,39 @@ public final class ClusterMember
 
         for (final ClusterMember member : clusterMembers)
         {
-            if (null == member.votedFor || member.leadershipTermId != candidateTermId)
+            if (null == member.vote || member.candidateTermId != candidateTermId)
             {
                 return false;
             }
 
-            votes += member.votedFor ? 1 : 0;
+            votes += member.vote ? 1 : 0;
+        }
+
+        return votes >= ClusterMember.quorumThreshold(clusterMembers.length);
+    }
+
+    /**
+     * Has sufficient votes being counted for a majority for all members observed during {@link Election.State#CANVASS}?
+     *
+     * @param clusterMembers  to check for votes.
+     * @param candidateTermId for the vote.
+     * @return false if any member has not voted for the candidate.
+     */
+    public static boolean hasMajorityVoteWithCanvassMembers(
+        final ClusterMember[] clusterMembers, final long candidateTermId)
+    {
+        int votes = 0;
+        for (final ClusterMember member : clusterMembers)
+        {
+            if (NULL_POSITION != member.logPosition && null == member.vote)
+            {
+                return false;
+            }
+
+            if (Boolean.TRUE.equals(member.vote) && member.candidateTermId == candidateTermId)
+            {
+                ++votes;
+            }
         }
 
         return votes >= ClusterMember.quorumThreshold(clusterMembers.length);
@@ -497,7 +586,7 @@ public final class ClusterMember
         int votes = 0;
         for (final ClusterMember member : clusterMembers)
         {
-            if (Boolean.TRUE.equals(member.votedFor) && member.leadershipTermId == candidateTermId)
+            if (Boolean.TRUE.equals(member.vote) && member.candidateTermId == candidateTermId)
             {
                 ++votes;
             }
@@ -516,13 +605,13 @@ public final class ClusterMember
     {
         if (!UDP_MEDIA.equals(archiveControlRequestUri.media()))
         {
-            throw new IllegalStateException("archive control request channel must be udp");
+            throw new ClusterException("archive control request channel must be udp");
         }
 
         final String archiveEndpoint = archiveControlRequestUri.get(ENDPOINT_PARAM_NAME);
         if (archiveEndpoint != null && !archiveEndpoint.equals(member.archiveEndpoint))
         {
-            throw new IllegalStateException(
+            throw new ClusterException(
                 "archive control request endpoint must match cluster member configuration: " + archiveEndpoint +
                 " != " + member.archiveEndpoint);
         }
@@ -539,9 +628,7 @@ public final class ClusterMember
     {
         for (final ClusterMember member : clusterMembers)
         {
-            if (NULL_POSITION == member.logPosition ||
-                candidate.leadershipTermId != member.leadershipTermId ||
-                candidate.logPosition < member.logPosition)
+            if (NULL_POSITION == member.logPosition || compareLog(candidate, member) < 0)
             {
                 return false;
             }
@@ -562,9 +649,7 @@ public final class ClusterMember
         int possibleVotes = 0;
         for (final ClusterMember member : clusterMembers)
         {
-            if (NULL_POSITION == member.logPosition ||
-                candidate.leadershipTermId != member.leadershipTermId ||
-                candidate.logPosition < member.logPosition)
+            if (NULL_POSITION == member.logPosition || compareLog(candidate, member) < 0)
             {
                 continue;
             }
@@ -573,5 +658,76 @@ public final class ClusterMember
         }
 
         return possibleVotes >= ClusterMember.quorumThreshold(clusterMembers.length);
+    }
+
+    /**
+     * The result is positive if lhs has the more recent log, zero if logs are equal, and negative if rhs has the more
+     * recent log.
+     *
+     * @param lhsLogLeadershipTermId term for which the position is most recent.
+     * @param lhsLogPosition         reached in the provided term.
+     * @param rhsLogLeadershipTermId term for which the position is most recent.
+     * @param rhsLogPosition         reached in the provided term.
+     * @return positive if lhs has the more recent log, zero if logs are equal, and negative if rhs has the more
+     *         recent log.
+     */
+    public static int compareLog(
+        final long lhsLogLeadershipTermId,
+        final long lhsLogPosition,
+        final long rhsLogLeadershipTermId,
+        final long rhsLogPosition)
+    {
+        if (lhsLogLeadershipTermId > rhsLogLeadershipTermId)
+        {
+            return 1;
+        }
+        else if (lhsLogLeadershipTermId < rhsLogLeadershipTermId)
+        {
+            return -1;
+        }
+        else if (lhsLogPosition > rhsLogPosition)
+        {
+            return 1;
+        }
+        else if (lhsLogPosition < rhsLogPosition)
+        {
+            return -1;
+        }
+
+        return 0;
+    }
+
+    /**
+     * The result is positive if lhs has the more recent log, zero if logs are equal, and negative if rhs has the more
+     * recent log.
+     *
+     * @param lhsMember to compare.
+     * @param rhsMember to compare.
+     * @return positive if lhs has the more recent log, zero if logs are equal, and negative if rhs has the more
+     *         recent log.
+     */
+    public static int compareLog(final ClusterMember lhsMember, final ClusterMember rhsMember)
+    {
+        return compareLog(
+            lhsMember.leadershipTermId, lhsMember.logPosition, rhsMember.leadershipTermId, rhsMember.logPosition);
+    }
+
+    public String toString()
+    {
+        return "ClusterMember{" +
+            "id=" + id +
+            ", isLeader=" + isLeader +
+            ", isBallotSent=" + isBallotSent +
+            ", vote=" + vote +
+            ", leadershipTermId=" + leadershipTermId +
+            ", logPosition=" + logPosition +
+            ", candidateTermId=" + candidateTermId +
+            ", clientFacingEndpoint='" + clientFacingEndpoint + '\'' +
+            ", memberFacingEndpoint='" + memberFacingEndpoint + '\'' +
+            ", logEndpoint='" + logEndpoint + '\'' +
+            ", transferEndpoint='" + transferEndpoint + '\'' +
+            ", archiveEndpoint='" + archiveEndpoint + '\'' +
+            ", endpointsDetail='" + endpointsDetail + '\'' +
+            '}';
     }
 }

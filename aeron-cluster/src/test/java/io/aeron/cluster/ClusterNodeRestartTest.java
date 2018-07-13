@@ -21,7 +21,7 @@ import io.aeron.Publication;
 import io.aeron.archive.Archive;
 import io.aeron.archive.ArchiveThreadingMode;
 import io.aeron.cluster.client.AeronCluster;
-import io.aeron.cluster.client.SessionDecorator;
+import io.aeron.cluster.service.ClientSession;
 import io.aeron.cluster.service.ClusteredService;
 import io.aeron.cluster.service.ClusteredServiceContainer;
 import io.aeron.driver.MediaDriver;
@@ -30,7 +30,6 @@ import io.aeron.logbuffer.Header;
 import org.agrona.CloseHelper;
 import org.agrona.DirectBuffer;
 import org.agrona.ExpandableArrayBuffer;
-import org.agrona.concurrent.NoOpLock;
 import org.agrona.concurrent.status.AtomicCounter;
 import org.agrona.concurrent.status.CountersReader;
 import org.junit.*;
@@ -39,11 +38,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static junit.framework.TestCase.assertTrue;
 import static org.agrona.BitUtil.SIZE_OF_INT;
 import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -56,8 +55,6 @@ public class ClusterNodeRestartTest
 
     private final ExpandableArrayBuffer msgBuffer = new ExpandableArrayBuffer();
     private AeronCluster aeronCluster;
-    private SessionDecorator sessionDecorator;
-    private Publication publication;
     private final AtomicReference<String> serviceState = new AtomicReference<>();
     private final AtomicBoolean isTerminated = new AtomicBoolean();
     private final AtomicLong snapshotCount = new AtomicLong();
@@ -78,11 +75,6 @@ public class ClusterNodeRestartTest
         CloseHelper.close(container);
         CloseHelper.close(clusteredMediaDriver);
 
-        if (null != container)
-        {
-            container.context().deleteDirectory();
-        }
-
         if (null != clusteredMediaDriver)
         {
             clusteredMediaDriver.consensusModule().context().deleteDirectory();
@@ -97,7 +89,7 @@ public class ClusterNodeRestartTest
         final AtomicLong serviceMsgCounter = new AtomicLong(0);
         final AtomicLong restartServiceMsgCounter = new AtomicLong(0);
 
-        launchService(true, serviceMsgCounter);
+        launchService(serviceMsgCounter);
         connectClient();
 
         sendCountedMessageIntoCluster(0);
@@ -108,12 +100,13 @@ public class ClusterNodeRestartTest
             Thread.yield();
         }
 
-        aeronCluster.close();
         container.close();
         clusteredMediaDriver.close();
+        aeronCluster.close();
 
         launchClusteredMediaDriver(false);
-        launchService(false, restartServiceMsgCounter);
+        launchService(restartServiceMsgCounter);
+        connectClient();
 
         while (restartServiceMsgCounter.get() == 0)
         {
@@ -128,7 +121,7 @@ public class ClusterNodeRestartTest
         final AtomicLong serviceMsgCounter = new AtomicLong(0);
         final AtomicLong restartServiceMsgCounter = new AtomicLong(0);
 
-        launchService(true, serviceMsgCounter);
+        launchService(serviceMsgCounter);
         connectClient();
 
         sendCountedMessageIntoCluster(0);
@@ -139,12 +132,12 @@ public class ClusterNodeRestartTest
             Thread.yield();
         }
 
-        aeronCluster.close();
         container.close();
         clusteredMediaDriver.close();
+        aeronCluster.close();
 
         launchClusteredMediaDriver(false);
-        launchService(false, restartServiceMsgCounter);
+        launchService(restartServiceMsgCounter);
         connectClient();
 
         sendCountedMessageIntoCluster(1);
@@ -161,7 +154,8 @@ public class ClusterNodeRestartTest
     {
         final AtomicLong serviceMsgCounter = new AtomicLong(0);
 
-        launchService(true, serviceMsgCounter);
+        launchService(serviceMsgCounter);
+        connectClient();
 
         final CountersReader counters = container.context().aeron().countersReader();
         final AtomicCounter controlToggle = ClusterControl.findControlToggle(counters);
@@ -176,10 +170,12 @@ public class ClusterNodeRestartTest
 
         container.close();
         clusteredMediaDriver.close();
+        aeronCluster.close();
 
         serviceState.set(null);
         launchClusteredMediaDriver(false);
-        launchService(false, serviceMsgCounter);
+        launchService(serviceMsgCounter);
+        connectClient();
 
         while (null == serviceState.get())
         {
@@ -195,7 +191,7 @@ public class ClusterNodeRestartTest
     {
         final AtomicLong serviceMsgCounter = new AtomicLong(0);
 
-        launchService(true, serviceMsgCounter);
+        launchService(serviceMsgCounter);
         connectClient();
 
         sendCountedMessageIntoCluster(0);
@@ -218,13 +214,14 @@ public class ClusterNodeRestartTest
             Thread.sleep(1);
         }
 
-        aeronCluster.close();
         container.close();
         clusteredMediaDriver.close();
+        aeronCluster.close();
 
         serviceState.set(null);
         launchClusteredMediaDriver(false);
-        launchService(false, serviceMsgCounter);
+        launchService(serviceMsgCounter);
+        connectClient();
 
         while (null == serviceState.get())
         {
@@ -240,7 +237,7 @@ public class ClusterNodeRestartTest
     {
         final AtomicLong serviceMsgCounter = new AtomicLong(0);
 
-        launchService(true, serviceMsgCounter);
+        launchService(serviceMsgCounter);
         connectClient();
 
         sendCountedMessageIntoCluster(0);
@@ -271,13 +268,14 @@ public class ClusterNodeRestartTest
             Thread.yield();
         }
 
-        aeronCluster.close();
         container.close();
         clusteredMediaDriver.close();
+        aeronCluster.close();
 
         serviceMsgCounter.set(0);
         launchClusteredMediaDriver(false);
-        launchService(false, serviceMsgCounter);
+        launchService(serviceMsgCounter);
+        connectClient();
 
         while (serviceMsgCounter.get() != 1)
         {
@@ -288,15 +286,40 @@ public class ClusterNodeRestartTest
         assertThat(serviceState.get(), is("4"));
     }
 
+    @Test(timeout = 10_000)
+    public void shouldTakeMultipleSnapshots() throws Exception
+    {
+        final AtomicLong serviceMsgCounter = new AtomicLong(0);
+
+        launchService(serviceMsgCounter);
+        connectClient();
+
+        final CountersReader counters = aeronCluster.context().aeron().countersReader();
+        final AtomicCounter controlToggle = ClusterControl.findControlToggle(counters);
+        assertNotNull(controlToggle);
+
+        for (int i = 0; i < 3; i++)
+        {
+            assertTrue(ClusterControl.ToggleState.SNAPSHOT.toggle(controlToggle));
+
+            while (controlToggle.get() != ClusterControl.ToggleState.NEUTRAL.code())
+            {
+                TestUtil.checkInterruptedStatus();
+                Thread.sleep(1);
+            }
+        }
+
+        assertThat(snapshotCount.get(), is(3L));
+    }
+
     private void sendCountedMessageIntoCluster(final int value)
     {
-        final long msgCorrelationId = aeronCluster.context().aeron().nextCorrelationId();
-
+        final long msgCorrelationId = aeronCluster.nextCorrelationId();
         msgBuffer.putInt(0, value);
 
         while (true)
         {
-            final long result = sessionDecorator.offer(publication, msgCorrelationId, msgBuffer, 0, SIZE_OF_INT);
+            final long result = aeronCluster.offer(msgCorrelationId, msgBuffer, 0, SIZE_OF_INT);
             if (result > 0)
             {
                 break;
@@ -309,7 +332,7 @@ public class ClusterNodeRestartTest
         }
     }
 
-    private void launchService(final boolean initialLaunch, final AtomicLong msgCounter)
+    private void launchService(final AtomicLong msgCounter)
     {
         final ClusteredService service =
             new StubClusteredService()
@@ -317,7 +340,7 @@ public class ClusterNodeRestartTest
                 private int counterValue = 0;
 
                 public void onSessionMessage(
-                    final long clusterSessionId,
+                    final ClientSession session,
                     final long correlationId,
                     final long timestampMs,
                     final DirectBuffer buffer,
@@ -355,8 +378,8 @@ public class ClusterNodeRestartTest
                             {
                                 counterValue = buffer.getInt(offset);
 
-                                final String s = buffer.getStringWithoutLengthAscii(offset +
-                                    SIZE_OF_INT, length - SIZE_OF_INT);
+                                final String s = buffer.getStringWithoutLengthAscii(
+                                    offset + SIZE_OF_INT, length - SIZE_OF_INT);
 
                                 serviceState.set(s);
                             },
@@ -367,8 +390,7 @@ public class ClusterNodeRestartTest
                             break;
                         }
 
-                        TestUtil.checkInterruptedStatus();
-                        Thread.yield();
+                        cluster.idle();
                     }
                 }
             };
@@ -379,24 +401,18 @@ public class ClusterNodeRestartTest
             new ClusteredServiceContainer.Context()
                 .clusteredService(service)
                 .terminationHook(() -> {})
-                .errorHandler(Throwable::printStackTrace)
-                .deleteDirOnStart(initialLaunch));
+                .errorHandler(Throwable::printStackTrace));
     }
 
     private AeronCluster connectToCluster()
     {
-        return AeronCluster.connect(
-            new AeronCluster.Context()
-                .lock(new NoOpLock()));
+        return AeronCluster.connect();
     }
 
     private void connectClient()
     {
         aeronCluster = null;
-
         aeronCluster = connectToCluster();
-        sessionDecorator = new SessionDecorator(aeronCluster.clusterSessionId());
-        publication = aeronCluster.ingressPublication();
     }
 
     private void launchClusteredMediaDriver(final boolean initialLaunch)

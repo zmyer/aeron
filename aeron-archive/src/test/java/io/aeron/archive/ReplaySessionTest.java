@@ -17,6 +17,7 @@ package io.aeron.archive;
 
 import io.aeron.Counter;
 import io.aeron.ExclusivePublication;
+import io.aeron.archive.client.AeronArchive;
 import io.aeron.logbuffer.ExclusiveBufferClaim;
 import io.aeron.logbuffer.FrameDescriptor;
 import io.aeron.logbuffer.Header;
@@ -30,6 +31,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.channels.FileChannel;
 
 import static io.aeron.archive.client.AeronArchive.NULL_POSITION;
@@ -73,7 +75,7 @@ public class ReplaySessionTest
     private RecordingSummary recordingSummary = new RecordingSummary();
 
     @Before
-    public void before()
+    public void before() throws IOException
     {
         when(position.getWeak()).then((invocation) -> positionLong);
         when(position.get()).then((invocation) -> positionLong);
@@ -112,6 +114,8 @@ public class ReplaySessionTest
         final RecordingWriter writer = new RecordingWriter(
             RECORDING_ID, START_POSITION, JOIN_POSITION, TERM_BUFFER_LENGTH, context, ARCHIVE_DIR_CHANNEL, position);
 
+        writer.init(INITIAL_TERM_OFFSET);
+
         final UnsafeBuffer buffer = new UnsafeBuffer(allocateDirectAligned(TERM_BUFFER_LENGTH, 64));
 
         final DataHeaderFlyweight headerFwt = new DataHeaderFlyweight();
@@ -141,11 +145,11 @@ public class ReplaySessionTest
             recordingSummary,
             archiveDir,
             NULL_POSITION,
-            RecordingFragmentReader.NULL_LENGTH,
+            AeronArchive.NULL_LENGTH,
             null))
         {
-            int polled = reader.controlledPoll(
-                (buffer, offset, length) ->
+            int fragments = reader.controlledPoll(
+                (buffer, offset, length, frameType, flags, reservedValue) ->
                 {
                     final int frameOffset = offset - DataHeaderFlyweight.HEADER_LENGTH;
                     assertEquals(offset, INITIAL_TERM_OFFSET + HEADER_LENGTH);
@@ -157,10 +161,10 @@ public class ReplaySessionTest
                 },
                 1);
 
-            assertEquals(1, polled);
+            assertEquals(1, fragments);
 
-            polled = reader.controlledPoll(
-                (buffer, offset, length) ->
+            fragments = reader.controlledPoll(
+                (buffer, offset, length, frameType, flags, reservedValue) ->
                 {
                     final int frameOffset = offset - DataHeaderFlyweight.HEADER_LENGTH;
                     assertEquals(offset, INITIAL_TERM_OFFSET + FRAME_LENGTH + HEADER_LENGTH);
@@ -172,10 +176,10 @@ public class ReplaySessionTest
                 },
                 1);
 
-            assertEquals(1, polled);
+            assertEquals(1, fragments);
 
-            polled = reader.controlledPoll(
-                (buffer, offset, length) ->
+            fragments = reader.controlledPoll(
+                (buffer, offset, length, frameType, flags, reservedValue) ->
                 {
                     final int frameOffset = offset - DataHeaderFlyweight.HEADER_LENGTH;
                     assertEquals(offset, INITIAL_TERM_OFFSET + 2 * FRAME_LENGTH + HEADER_LENGTH);
@@ -187,10 +191,10 @@ public class ReplaySessionTest
                 },
                 1);
 
-            assertEquals(1, polled);
+            assertEquals(1, fragments);
 
-            polled = reader.controlledPoll(
-                (buffer, offset, length) ->
+            fragments = reader.controlledPoll(
+                (buffer, offset, length, frameType, flags, reservedValue) ->
                 {
                     final int frameOffset = offset - DataHeaderFlyweight.HEADER_LENGTH;
                     assertEquals(offset, INITIAL_TERM_OFFSET + 3 * FRAME_LENGTH + HEADER_LENGTH);
@@ -202,7 +206,7 @@ public class ReplaySessionTest
                 },
                 1);
 
-            assertEquals(1, polled);
+            assertEquals(1, fragments);
         }
     }
 
@@ -327,7 +331,7 @@ public class ReplaySessionTest
     }
 
     @Test
-    public void shouldReplayFromActiveRecording()
+    public void shouldReplayFromActiveRecording() throws IOException
     {
         final UnsafeBuffer termBuffer = new UnsafeBuffer(allocateDirectAligned(4096, 64));
 
@@ -340,6 +344,8 @@ public class ReplaySessionTest
 
         final RecordingWriter writer = new RecordingWriter(
             recordingId, START_POSITION, JOIN_POSITION, TERM_BUFFER_LENGTH, context, ARCHIVE_DIR_CHANNEL, position);
+
+        writer.init(INITIAL_TERM_OFFSET);
 
         when(epochClock.time()).thenReturn(TIME);
 

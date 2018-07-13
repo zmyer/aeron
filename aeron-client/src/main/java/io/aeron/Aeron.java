@@ -15,6 +15,7 @@
  */
 package io.aeron;
 
+import io.aeron.exceptions.AeronException;
 import io.aeron.exceptions.DriverTimeoutException;
 import io.aeron.logbuffer.FragmentHandler;
 import org.agrona.DirectBuffer;
@@ -28,16 +29,21 @@ import org.agrona.concurrent.ringbuffer.RingBuffer;
 import org.agrona.concurrent.status.CountersReader;
 
 import java.io.File;
+import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
+import static java.nio.channels.FileChannel.MapMode.READ_WRITE;
+import static java.nio.file.StandardOpenOption.READ;
+import static java.nio.file.StandardOpenOption.WRITE;
 import static java.util.concurrent.atomic.AtomicIntegerFieldUpdater.newUpdater;
-import static org.agrona.IoUtil.mapExistingFile;
+import static org.agrona.BitUtil.SIZE_OF_INT;
 
 /**
  * Aeron entry point for communicating to the Media Driver for creating {@link Publication}s and {@link Subscription}s.
@@ -50,6 +56,11 @@ import static org.agrona.IoUtil.mapExistingFile;
  */
 public class Aeron implements AutoCloseable
 {
+    /**
+     * Used to represent a null value for when some value is not yet set.
+     */
+    public static final int NULL_VALUE = -1;
+
     /**
      * Using an integer because there is no support for boolean. 1 is closed and 0 is not closed.
      */
@@ -321,7 +332,7 @@ public class Aeron implements AutoCloseable
     {
         if (1 == isClosed)
         {
-            throw new IllegalStateException("Client is closed");
+            throw new AeronException("Client is closed");
         }
 
         return commandBuffer.nextCorrelationId();
@@ -336,7 +347,7 @@ public class Aeron implements AutoCloseable
     {
         if (1 == isClosed)
         {
-            throw new IllegalStateException("Client is closed");
+            throw new AeronException("Client is closed");
         }
 
         return conductor.countersReader();
@@ -972,27 +983,28 @@ public class Aeron implements AutoCloseable
         private void connectToDriver()
         {
             final long startTimeMs = epochClock.time();
+            final long deadlineMs = startTimeMs + driverTimeoutMs();
             final File cncFile = cncFile();
 
-            while (true)
+            while (null == toDriverBuffer)
             {
                 while (!cncFile.exists() || cncFile.length() <= 0)
                 {
-                    if (epochClock.time() > (startTimeMs + driverTimeoutMs()))
+                    if (epochClock.time() > deadlineMs)
                     {
                         throw new DriverTimeoutException("CnC file not created: " + cncFile.getAbsolutePath());
                     }
 
-                    sleep(16);
+                    sleep(IDLE_SLEEP_MS);
                 }
 
-                cncByteBuffer = mapExistingFile(cncFile(), CncFileDescriptor.CNC_FILE);
+                cncByteBuffer = waitForFileMapping(cncFile, deadlineMs, epochClock);
                 cncMetaDataBuffer = CncFileDescriptor.createMetaDataBuffer(cncByteBuffer);
 
                 int cncVersion;
                 while (0 == (cncVersion = cncMetaDataBuffer.getIntVolatile(CncFileDescriptor.cncVersionOffset(0))))
                 {
-                    if (epochClock.time() > (startTimeMs + driverTimeoutMs()))
+                    if (epochClock.time() > deadlineMs)
                     {
                         throw new DriverTimeoutException("CnC file is created but not initialised.");
                     }
@@ -1002,7 +1014,7 @@ public class Aeron implements AutoCloseable
 
                 if (CncFileDescriptor.CNC_VERSION != cncVersion)
                 {
-                    throw new IllegalStateException("CnC file version not supported: version=" + cncVersion);
+                    throw new AeronException("CnC file version not supported: version=" + cncVersion);
                 }
 
                 final ManyToOneRingBuffer ringBuffer = new ManyToOneRingBuffer(
@@ -1010,7 +1022,7 @@ public class Aeron implements AutoCloseable
 
                 while (0 == ringBuffer.consumerHeartbeatTime())
                 {
-                    if (epochClock.time() > (startTimeMs + driverTimeoutMs()))
+                    if (epochClock.time() > deadlineMs)
                     {
                         throw new DriverTimeoutException("No driver heartbeat detected.");
                     }
@@ -1021,7 +1033,7 @@ public class Aeron implements AutoCloseable
                 final long timeMs = epochClock.time();
                 if (ringBuffer.consumerHeartbeatTime() < (timeMs - driverTimeoutMs()))
                 {
-                    if (timeMs > (startTimeMs + driverTimeoutMs()))
+                    if (timeMs > deadlineMs)
                     {
                         throw new DriverTimeoutException("No driver heartbeat detected.");
                     }
@@ -1034,13 +1046,31 @@ public class Aeron implements AutoCloseable
                     continue;
                 }
 
-                if (null == toDriverBuffer)
+                toDriverBuffer = ringBuffer;
+            }
+        }
+    }
+
+    private static MappedByteBuffer waitForFileMapping(
+        final File cncFile, final long deadlineMs, final EpochClock epochClock)
+    {
+        try (FileChannel fileChannel = FileChannel.open(cncFile.toPath(), READ, WRITE))
+        {
+            while (fileChannel.size() < CncFileDescriptor.CNC_VERSION_FIELD_OFFSET + SIZE_OF_INT)
+            {
+                if (epochClock.time() > deadlineMs)
                 {
-                    toDriverBuffer = ringBuffer;
+                    throw new AeronException("CnC file is created but not populated");
                 }
 
-                break;
+                sleep(IDLE_SLEEP_MS);
             }
+
+            return fileChannel.map(READ_WRITE, 0, fileChannel.size());
+        }
+        catch (final IOException ex)
+        {
+            throw new AeronException("cannot open CnC file", ex);
         }
     }
 
@@ -1052,7 +1082,7 @@ public class Aeron implements AutoCloseable
         }
         catch (final InterruptedException ignore)
         {
-            Thread.interrupted();
+            Thread.currentThread().interrupt();
         }
     }
 }

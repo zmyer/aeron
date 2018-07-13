@@ -15,6 +15,7 @@
  */
 package io.aeron;
 
+import io.aeron.exceptions.AeronException;
 import io.aeron.logbuffer.*;
 import io.aeron.status.ChannelEndpointStatus;
 import org.agrona.DirectBuffer;
@@ -306,8 +307,7 @@ public abstract class Publication implements AutoCloseable
     /**
      * Get the current position to which the publication has advanced for this stream.
      *
-     * @return the current position to which the publication has advanced for this stream.
-     * @throws IllegalStateException if the publication is closed.
+     * @return the current position to which the publication has advanced for this stream or {@link #CLOSED}.
      */
     public long position()
     {
@@ -456,7 +456,7 @@ public abstract class Publication implements AutoCloseable
     {
         if (isClosed)
         {
-            throw new IllegalStateException("Publication is closed");
+            throw new AeronException("Publication is closed");
         }
 
         conductor.addDestination(registrationId, endpointChannel);
@@ -471,7 +471,7 @@ public abstract class Publication implements AutoCloseable
     {
         if (isClosed)
         {
-            throw new IllegalStateException("Publication is closed");
+            throw new AeronException("Publication is closed");
         }
 
         conductor.removeDestination(registrationId, endpointChannel);
@@ -487,7 +487,7 @@ public abstract class Publication implements AutoCloseable
         return logBuffers;
     }
 
-    long backPressureStatus(final long currentPosition, final int messageLength)
+    final long backPressureStatus(final long currentPosition, final int messageLength)
     {
         if ((currentPosition + messageLength) >= maxPossiblePosition)
         {
@@ -502,7 +502,7 @@ public abstract class Publication implements AutoCloseable
         return NOT_CONNECTED;
     }
 
-    void checkForMaxPayloadLength(final int length)
+    final void checkForMaxPayloadLength(final int length)
     {
         if (length > maxPayloadLength)
         {
@@ -511,7 +511,7 @@ public abstract class Publication implements AutoCloseable
         }
     }
 
-    void checkForMaxMessageLength(final int length)
+    final void checkForMaxMessageLength(final int length)
     {
         if (length > maxMessageLength)
         {

@@ -15,8 +15,9 @@
  */
 package io.aeron.driver;
 
-import io.aeron.driver.cmd.*;
 import io.aeron.driver.media.ReceiveChannelEndpoint;
+import io.aeron.driver.media.ReceiveDestinationUdpTransport;
+import io.aeron.driver.media.UdpChannel;
 import org.agrona.concurrent.status.AtomicCounter;
 
 import java.util.Queue;
@@ -30,13 +31,13 @@ import static io.aeron.driver.ThreadingMode.SHARED;
 public class ReceiverProxy
 {
     private final ThreadingMode threadingMode;
-    private final Queue<ReceiverCmd> commandQueue;
+    private final Queue<Runnable> commandQueue;
     private final AtomicCounter failCount;
 
     private Receiver receiver;
 
     public ReceiverProxy(
-        final ThreadingMode threadingMode, final Queue<ReceiverCmd> commandQueue, final AtomicCounter failCount)
+        final ThreadingMode threadingMode, final Queue<Runnable> commandQueue, final AtomicCounter failCount)
     {
         this.threadingMode = threadingMode;
         this.commandQueue = commandQueue;
@@ -61,7 +62,7 @@ public class ReceiverProxy
         }
         else
         {
-            offer(new AddSubscriptionCmd(mediaEndpoint, streamId));
+            offer(() -> receiver.onAddSubscription(mediaEndpoint, streamId));
         }
     }
 
@@ -73,7 +74,7 @@ public class ReceiverProxy
         }
         else
         {
-            offer(new AddSubscriptionAndSessionCmd(mediaEndpoint, streamId, sessionId));
+            offer(() -> receiver.onAddSubscription(mediaEndpoint, streamId, sessionId));
         }
     }
 
@@ -85,7 +86,7 @@ public class ReceiverProxy
         }
         else
         {
-            offer(new RemoveSubscriptionCmd(mediaEndpoint, streamId));
+            offer(() -> receiver.onRemoveSubscription(mediaEndpoint, streamId));
         }
     }
 
@@ -97,7 +98,7 @@ public class ReceiverProxy
         }
         else
         {
-            offer(new RemoveSubscriptionAndSessionCmd(mediaEndpoint, streamId, sessionId));
+            offer(() -> receiver.onRemoveSubscription(mediaEndpoint, streamId, sessionId));
         }
     }
 
@@ -109,7 +110,7 @@ public class ReceiverProxy
         }
         else
         {
-            offer(new NewPublicationImageCmd(channelEndpoint, image));
+            offer(() -> receiver.onNewPublicationImage(channelEndpoint, image));
         }
     }
 
@@ -121,7 +122,7 @@ public class ReceiverProxy
         }
         else
         {
-            offer(new RegisterReceiveChannelEndpointCmd(channelEndpoint));
+            offer(() -> receiver.onRegisterReceiveChannelEndpoint(channelEndpoint));
         }
     }
 
@@ -133,7 +134,7 @@ public class ReceiverProxy
         }
         else
         {
-            offer(new CloseReceiveChannelEndpointCmd(channelEndpoint));
+            offer(() -> receiver.onCloseReceiveChannelEndpoint(channelEndpoint));
         }
     }
 
@@ -145,7 +146,32 @@ public class ReceiverProxy
         }
         else
         {
-            offer(new RemoveCoolDownCmd(channelEndpoint, sessionId, streamId));
+            offer(() -> receiver.onRemoveCoolDown(channelEndpoint, sessionId, streamId));
+        }
+    }
+
+    public void addDestination(
+        final ReceiveChannelEndpoint channelEndpoint, final ReceiveDestinationUdpTransport transport)
+    {
+        if (notConcurrent())
+        {
+            receiver.onAddDestination(channelEndpoint, transport);
+        }
+        else
+        {
+            offer(() -> receiver.onAddDestination(channelEndpoint, transport));
+        }
+    }
+
+    public void removeDestination(final ReceiveChannelEndpoint channelEndpoint, final UdpChannel udpChannel)
+    {
+        if (notConcurrent())
+        {
+            receiver.onRemoveDestination(channelEndpoint, udpChannel);
+        }
+        else
+        {
+            offer(() -> receiver.onRemoveDestination(channelEndpoint, udpChannel));
         }
     }
 
@@ -154,7 +180,7 @@ public class ReceiverProxy
         return threadingMode == SHARED || threadingMode == INVOKER;
     }
 
-    private void offer(final ReceiverCmd cmd)
+    private void offer(final Runnable cmd)
     {
         while (!commandQueue.offer(cmd))
         {

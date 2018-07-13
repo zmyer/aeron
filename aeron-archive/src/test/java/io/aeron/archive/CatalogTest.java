@@ -25,8 +25,12 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 import static io.aeron.archive.Archive.segmentFileName;
 import static io.aeron.archive.Catalog.PAGE_SIZE;
@@ -37,12 +41,15 @@ import static io.aeron.protocol.DataHeaderFlyweight.HEADER_LENGTH;
 import static java.nio.file.StandardOpenOption.*;
 import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.*;
+import static org.junit.Assume.assumeThat;
 
 public class CatalogTest
 {
     private static final long MAX_ENTRIES = 1024;
-    private static final int TERM_BUFFER_LENGTH = 2 * Catalog.PAGE_SIZE;
-    private static final int SEGMENT_FILE_SIZE = 2 * TERM_BUFFER_LENGTH;
+    private static final int TERM_LENGTH = 2 * Catalog.PAGE_SIZE;
+    private static final int SEGMENT_LENGTH = 2 * TERM_LENGTH;
+    private static final int MTU_LENGTH = 1024;
+
     private final UnsafeBuffer unsafeBuffer = new UnsafeBuffer();
     private final RecordingDescriptorDecoder recordingDescriptorDecoder = new RecordingDescriptorDecoder();
     private final File archiveDir = TestUtil.makeTestDirectory();
@@ -60,11 +67,11 @@ public class CatalogTest
         try (Catalog catalog = new Catalog(archiveDir, null, 0, MAX_ENTRIES, clock))
         {
             recordingOneId = catalog.addNewRecording(
-                0L, 0L, 0, SEGMENT_FILE_SIZE, TERM_BUFFER_LENGTH, 1024, 6, 1, "channelG", "channelG?tag=f", "sourceA");
+                0L, 0L, 0, SEGMENT_LENGTH, TERM_LENGTH, MTU_LENGTH, 6, 1, "channelG", "channelG?tag=f", "sourceA");
             recordingTwoId = catalog.addNewRecording(
-                0L, 0L, 0, SEGMENT_FILE_SIZE, TERM_BUFFER_LENGTH, 1024, 7, 2, "channelH", "channelH?tag=f", "sourceV");
+                0L, 0L, 0, SEGMENT_LENGTH, TERM_LENGTH, MTU_LENGTH, 7, 2, "channelH", "channelH?tag=f", "sourceV");
             recordingThreeId = catalog.addNewRecording(
-                0L, 0L, 0, SEGMENT_FILE_SIZE, TERM_BUFFER_LENGTH, 1024, 8, 3, "channelK", "channelK?tag=f", "sourceB");
+                0L, 0L, 0, SEGMENT_LENGTH, TERM_LENGTH, MTU_LENGTH, 8, 3, "channelK", "channelK?tag=f", "sourceB");
         }
     }
 
@@ -112,7 +119,7 @@ public class CatalogTest
         try (Catalog catalog = new Catalog(archiveDir, null, 0, MAX_ENTRIES, () -> 3L))
         {
             newRecordingId = catalog.addNewRecording(
-                0L, 0L, 0, SEGMENT_FILE_SIZE, TERM_BUFFER_LENGTH, 1024, 9, 4, "channelJ", "channelJ?tag=f", "sourceN");
+                0L, 0L, 0, SEGMENT_LENGTH, TERM_LENGTH, MTU_LENGTH, 9, 4, "channelJ", "channelJ?tag=f", "sourceN");
         }
 
         try (Catalog catalog = new Catalog(archiveDir, clock))
@@ -129,6 +136,28 @@ public class CatalogTest
         {
             final long newRecordingId = newRecording();
             assertNotEquals(recordingOneId, newRecordingId);
+        }
+    }
+
+    @Test
+    public void shouldIncreaseMaxEntries()
+    {
+        final long newMaxEntries = MAX_ENTRIES * 2;
+
+        try (Catalog catalog = new Catalog(archiveDir, null, 0, newMaxEntries, clock))
+        {
+            assertEquals(newMaxEntries, catalog.maxEntries());
+        }
+    }
+
+    @Test
+    public void shouldNotDecreaseMaxEntries()
+    {
+        final long newMaxEntries = 1;
+
+        try (Catalog catalog = new Catalog(archiveDir, null, 0, newMaxEntries, clock))
+        {
+            assertEquals(MAX_ENTRIES, catalog.maxEntries());
         }
     }
 
@@ -161,6 +190,7 @@ public class CatalogTest
         new File(archiveDir, segmentFileName(newRecordingId, 1)).createNewFile();
         new File(archiveDir, segmentFileName(newRecordingId, 2)).createNewFile();
         final File segmentFile = new File(archiveDir, segmentFileName(newRecordingId, 3));
+
         try (FileChannel log = FileChannel.open(segmentFile.toPath(), READ, WRITE, CREATE))
         {
             final ByteBuffer bb = ByteBuffer.allocateDirect(HEADER_LENGTH);
@@ -194,7 +224,7 @@ public class CatalogTest
                 (he, hd, e, decoder) ->
                 {
                     assertThat(decoder.stopTimestamp(), is(42L));
-                    assertThat(decoder.stopPosition(), is(SEGMENT_FILE_SIZE * 3 + 1024L + 128L));
+                    assertThat(decoder.stopPosition(), is(SEGMENT_LENGTH * 3 + 1024L + 128L));
                 },
                 newRecordingId);
         }
@@ -205,20 +235,7 @@ public class CatalogTest
     {
         final long newRecordingId = newRecording();
 
-        final File segmentFile = new File(archiveDir, segmentFileName(newRecordingId, 0));
-        try (FileChannel log = FileChannel.open(segmentFile.toPath(), READ, WRITE, CREATE))
-        {
-            final ByteBuffer bb = ByteBuffer.allocateDirect(HEADER_LENGTH);
-            final DataHeaderFlyweight flyweight = new DataHeaderFlyweight(bb);
-            flyweight.frameLength(PAGE_SIZE - 32);
-            log.write(bb);
-            bb.clear();
-            flyweight.frameLength(128);
-            log.write(bb, PAGE_SIZE - 32);
-            bb.clear();
-            flyweight.frameLength(0);
-            log.write(bb, PAGE_SIZE - 32 + 128);
-        }
+        createSegmentFile(newRecordingId);
 
         try (Catalog catalog = new Catalog(archiveDir, clock))
         {
@@ -239,7 +256,7 @@ public class CatalogTest
                 (he, hd, e, decoder) ->
                 {
                     assertThat(decoder.stopTimestamp(), is(42L));
-                    assertThat(decoder.stopPosition(), is((long)PAGE_SIZE - 32));
+                    assertThat(decoder.stopPosition(), is((long)PAGE_SIZE - HEADER_LENGTH));
                 },
                 newRecordingId));
         }
@@ -254,9 +271,9 @@ public class CatalogTest
                 0L,
                 0L,
                 0,
-                SEGMENT_FILE_SIZE,
-                TERM_BUFFER_LENGTH,
-                1024,
+                SEGMENT_LENGTH,
+                TERM_LENGTH,
+                MTU_LENGTH,
                 6,
                 1,
                 "channelG",
@@ -271,7 +288,7 @@ public class CatalogTest
     public void shouldFixTimestampAndPositionAfterFailureFullSegment() throws Exception
     {
         final long newRecordingId = newRecording();
-        final long expectedLastFrame = SEGMENT_FILE_SIZE - 128;
+        final long expectedLastFrame = SEGMENT_LENGTH - 128;
 
         final File segmentFile = new File(archiveDir, segmentFileName(newRecordingId, 0));
         try (FileChannel log = FileChannel.open(segmentFile.toPath(), READ, WRITE, CREATE))
@@ -286,7 +303,7 @@ public class CatalogTest
             bb.clear();
             flyweight.frameLength(0);
             log.write(bb, expectedLastFrame + 128);
-            log.truncate(SEGMENT_FILE_SIZE);
+            log.truncate(SEGMENT_LENGTH);
         }
 
         try (Catalog catalog = new Catalog(archiveDir, clock))
@@ -311,6 +328,69 @@ public class CatalogTest
                     assertThat(decoder.stopPosition(), is(expectedLastFrame));
                 },
                 newRecordingId);
+        }
+    }
+
+    @Test
+    public void shouldBeAbleToCreateMaxEntries()
+    {
+        after();
+        final File archiveDir = TestUtil.makeTestDirectory();
+        final long maxEntries = 2;
+
+        try (Catalog catalog = new Catalog(archiveDir, null, 0, maxEntries, clock))
+        {
+            for (int i = 0; i < maxEntries; i++)
+            {
+                recordingOneId = catalog.addNewRecording(
+                    0L,
+                    0L,
+                    0,
+                    SEGMENT_LENGTH,
+                    TERM_LENGTH,
+                    MTU_LENGTH,
+                    6,
+                    1,
+                    "channelG",
+                    "channelG?tag=f",
+                    "sourceA");
+            }
+        }
+
+        try (Catalog catalog = new Catalog(archiveDir, null, 0, maxEntries, clock))
+        {
+            assertEquals(maxEntries, catalog.countEntries());
+        }
+    }
+
+    @Test
+    public void shouldNotThrowWhenOldRecordingLogsAreDeleted() throws IOException
+    {
+        createSegmentFile(recordingThreeId);
+
+        final Path segmentFilePath = Paths.get(segmentFileName(recordingThreeId, 0));
+        final boolean segmentFileExists = Files.exists(archiveDir.toPath().resolve(segmentFilePath));
+        assumeThat(segmentFileExists, is(true));
+
+        final Catalog catalog = new Catalog(archiveDir, null, 0, MAX_ENTRIES, clock);
+        catalog.close();
+    }
+
+    private void createSegmentFile(final long newRecordingId) throws IOException
+    {
+        final File segmentFile = new File(archiveDir, segmentFileName(newRecordingId, 0));
+        try (FileChannel log = FileChannel.open(segmentFile.toPath(), READ, WRITE, CREATE))
+        {
+            final ByteBuffer bb = ByteBuffer.allocateDirect(HEADER_LENGTH);
+            final DataHeaderFlyweight flyweight = new DataHeaderFlyweight(bb);
+            flyweight.frameLength(PAGE_SIZE - HEADER_LENGTH);
+            log.write(bb);
+            bb.clear();
+            flyweight.frameLength(128);
+            log.write(bb, PAGE_SIZE - HEADER_LENGTH);
+            bb.clear();
+            flyweight.frameLength(0);
+            log.write(bb, PAGE_SIZE - HEADER_LENGTH + 128);
         }
     }
 }

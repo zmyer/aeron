@@ -16,6 +16,7 @@
 package io.aeron.archive;
 
 import io.aeron.Publication;
+import io.aeron.archive.client.ArchiveException;
 import io.aeron.archive.codecs.*;
 import io.aeron.logbuffer.BufferClaim;
 import org.agrona.DirectBuffer;
@@ -96,6 +97,7 @@ class ControlResponseProxy
     void attemptErrorResponse(
         final long controlSessionId,
         final long correlationId,
+        final long relevantId,
         final String errorMessage,
         final Publication controlPublication)
     {
@@ -103,7 +105,7 @@ class ControlResponseProxy
             .wrapAndApplyHeader(buffer, 0, messageHeaderEncoder)
             .controlSessionId(controlSessionId)
             .correlationId(correlationId)
-            .relevantId(0)
+            .relevantId(relevantId)
             .code(ControlResponseCode.ERROR)
             .errorMessage(null == errorMessage ? "" : errorMessage);
 
@@ -139,17 +141,17 @@ class ControlResponseProxy
     {
         if (result == Publication.NOT_CONNECTED)
         {
-            throw new IllegalStateException("response publication is not connected: " + controlPublication.channel());
+            throw new ArchiveException("response publication is not connected: " + controlPublication.channel());
         }
 
         if (result == Publication.CLOSED)
         {
-            throw new IllegalStateException("response publication is closed: " + controlPublication.channel());
+            throw new ArchiveException("response publication is closed: " + controlPublication.channel());
         }
 
         if (result == Publication.MAX_POSITION_EXCEEDED)
         {
-            throw new IllegalStateException("response publication at max position: " + controlPublication.channel());
+            throw new ArchiveException("response publication at max position: " + controlPublication.channel());
         }
     }
 }

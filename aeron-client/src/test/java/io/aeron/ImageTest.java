@@ -27,10 +27,10 @@ import org.mockito.*;
 import static io.aeron.logbuffer.LogBufferDescriptor.*;
 import static io.aeron.protocol.DataHeaderFlyweight.HEADER_LENGTH;
 import static java.nio.ByteBuffer.allocateDirect;
-import static junit.framework.TestCase.assertTrue;
 import static org.agrona.BitUtil.align;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.*;
 
 public class ImageTest
@@ -486,6 +486,33 @@ public class ImageTest
         final long initialPosition =
             computePosition(INITIAL_TERM_ID, initialOffset, POSITION_BITS_TO_SHIFT, INITIAL_TERM_ID);
         final long maxPosition = initialPosition + TERM_BUFFER_LENGTH;
+        position.setOrdered(initialPosition);
+        final Image image = createImage();
+
+        insertDataFrame(INITIAL_TERM_ID, initialOffset);
+        insertPaddingFrame(INITIAL_TERM_ID, initialOffset + ALIGNED_FRAME_LENGTH);
+
+        when(mockControlledFragmentHandler.onFragment(any(DirectBuffer.class), anyInt(), anyInt(), any(Header.class)))
+            .thenReturn(Action.CONTINUE);
+
+        final int fragmentsRead =
+            image.boundedControlledPoll(mockControlledFragmentHandler, maxPosition, Integer.MAX_VALUE);
+
+        assertThat(fragmentsRead, is(1));
+
+        final InOrder inOrder = Mockito.inOrder(position, mockControlledFragmentHandler);
+        inOrder.verify(mockControlledFragmentHandler).onFragment(
+            any(UnsafeBuffer.class), eq(initialOffset + HEADER_LENGTH), eq(DATA.length), any(Header.class));
+        inOrder.verify(position).setOrdered(TERM_BUFFER_LENGTH);
+    }
+
+    @Test
+    public void shouldPollFragmentsToBoundedControlledFragmentHandlerWithMaxPositionAboveIntMaxValue()
+    {
+        final int initialOffset = TERM_BUFFER_LENGTH - (ALIGNED_FRAME_LENGTH * 2);
+        final long initialPosition =
+            computePosition(INITIAL_TERM_ID, initialOffset, POSITION_BITS_TO_SHIFT, INITIAL_TERM_ID);
+        final long maxPosition = (long)Integer.MAX_VALUE + 1000;
         position.setOrdered(initialPosition);
         final Image image = createImage();
 

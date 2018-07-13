@@ -42,7 +42,7 @@ public class StubClusteredService implements ClusteredService
     }
 
     public void onSessionMessage(
-        final long clusterSessionId,
+        final ClientSession session,
         final long correlationId,
         final long timestampMs,
         final DirectBuffer buffer,
@@ -64,19 +64,7 @@ public class StubClusteredService implements ClusteredService
     {
     }
 
-    public void onReplayBegin()
-    {
-    }
-
-    public void onReplayEnd()
-    {
-    }
-
     public void onRoleChange(final Cluster.Role newRole)
-    {
-    }
-
-    public void onReady()
     {
     }
 }

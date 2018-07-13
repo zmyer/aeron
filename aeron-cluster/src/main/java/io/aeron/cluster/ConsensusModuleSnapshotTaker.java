@@ -28,7 +28,7 @@ class ConsensusModuleSnapshotTaker extends SnapshotTaker
 
     private final ClusterSessionEncoder clusterSessionEncoder = new ClusterSessionEncoder();
     private final TimerEncoder timerEncoder = new TimerEncoder();
-    private final SequencerEncoder sequencerEncoder = new SequencerEncoder();
+    private final ConsensusModuleEncoder consensusModuleEncoder = new ConsensusModuleEncoder();
 
     ConsensusModuleSnapshotTaker(
         final Publication publication, final IdleStrategy idleStrategy, final AgentInvoker aeronClientInvoker)
@@ -36,7 +36,7 @@ class ConsensusModuleSnapshotTaker extends SnapshotTaker
         super(publication, idleStrategy, aeronClientInvoker);
     }
 
-    public void snapshotSession(final ClusterSession session)
+    void snapshotSession(final ClusterSession session)
     {
         final String responseChannel = session.responseChannel();
         final int length = MessageHeaderEncoder.ENCODED_LENGTH + ClusterSessionEncoder.BLOCK_LENGTH +
@@ -53,7 +53,7 @@ class ConsensusModuleSnapshotTaker extends SnapshotTaker
                     .clusterSessionId(session.id())
                     .lastCorrelationId(session.lastCorrelationId())
                     .timeOfLastActivity(session.timeOfLastActivityMs())
-                    .openedTermPosition(session.openedTermPosition())
+                    .openedLogPosition(session.openedLogPosition())
                     .closeReason(session.closeReason())
                     .responseStreamId(session.responseStreamId())
                     .responseChannel(responseChannel);
@@ -66,7 +66,7 @@ class ConsensusModuleSnapshotTaker extends SnapshotTaker
         }
     }
 
-    public void snapshotTimer(final long correlationId, final long deadline)
+    void snapshotTimer(final long correlationId, final long deadline)
     {
         idleStrategy.reset();
         while (true)
@@ -87,9 +87,9 @@ class ConsensusModuleSnapshotTaker extends SnapshotTaker
         }
     }
 
-    public void sequencerState(final long nextSessionId)
+    void consensusModuleState(final long nextSessionId)
     {
-        final int length = MessageHeaderEncoder.ENCODED_LENGTH + SequencerEncoder.BLOCK_LENGTH;
+        final int length = MessageHeaderEncoder.ENCODED_LENGTH + ConsensusModuleEncoder.BLOCK_LENGTH;
 
         idleStrategy.reset();
         while (true)
@@ -97,7 +97,7 @@ class ConsensusModuleSnapshotTaker extends SnapshotTaker
             final long result = publication.tryClaim(length, bufferClaim);
             if (result > 0)
             {
-                sequencerEncoder
+                consensusModuleEncoder
                     .wrapAndApplyHeader(bufferClaim.buffer(), bufferClaim.offset(), messageHeaderEncoder)
                     .nextSessionId(nextSessionId);
 

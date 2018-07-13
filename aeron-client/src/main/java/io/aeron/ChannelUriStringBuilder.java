@@ -31,6 +31,8 @@ import static io.aeron.logbuffer.FrameDescriptor.FRAME_ALIGNMENT;
  */
 public class ChannelUriStringBuilder
 {
+    public static final String TAG_PREFIX = "tag:";
+
     private StringBuilder sb = new StringBuilder(64);
 
     private String prefix;
@@ -39,6 +41,7 @@ public class ChannelUriStringBuilder
     private String networkInterface;
     private String controlEndpoint;
     private String controlMode;
+    private String tags;
     private Boolean reliable;
     private Integer ttl;
     private Integer mtu;
@@ -48,6 +51,7 @@ public class ChannelUriStringBuilder
     private Integer termOffset;
     private Integer sessionId;
     private Integer linger;
+    private boolean isSessionIdTagged;
 
     /**
      * Clear out all the values thus setting back to the initial state.
@@ -62,6 +66,7 @@ public class ChannelUriStringBuilder
         networkInterface = null;
         controlEndpoint = null;
         controlMode = null;
+        tags = null;
         reliable = null;
         ttl  = null;
         mtu = null;
@@ -70,6 +75,7 @@ public class ChannelUriStringBuilder
         termId = null;
         termOffset = null;
         sessionId = null;
+        isSessionIdTagged = false;
 
         return this;
     }
@@ -541,6 +547,72 @@ public class ChannelUriStringBuilder
     }
 
     /**
+     * Set the tags for a channel, and/or publication or subscription.
+     *
+     * @param tags for the channel, publication or subscription.
+     * @return this for a fluent API.
+     * @see CommonContext#TAGS_PARAM_NAME
+     */
+    public ChannelUriStringBuilder tags(final String tags)
+    {
+        this.tags = tags;
+        return this;
+    }
+
+    /**
+     * Get the tags for a channel, and/or publication or subscription.
+     *
+     * @return the tags for a channel, publication or subscription.
+     * @see CommonContext#TAGS_PARAM_NAME
+     */
+    public String tags()
+    {
+        return tags;
+    }
+
+    /**
+     * Toggle the value for {@link #sessionId()} being tagged or not.
+     *
+     * @param isSessionIdTagged for session id
+     * @return this for a fluent API.
+     */
+    public ChannelUriStringBuilder isSessionIdTagged(final boolean isSessionIdTagged)
+    {
+        this.isSessionIdTagged = isSessionIdTagged;
+        return this;
+    }
+
+    /**
+     * Is the value for {@link #sessionId()} a tagged.
+     *
+     * @return whether the value for {@link #sessionId()} a tag reference or not.
+     */
+    public boolean isSessionIdTagged()
+    {
+        return isSessionIdTagged;
+    }
+
+    /**
+     * Initialise a channel for restarting a publication at a given position.
+     *
+     * @param position      at which the publication should be started.
+     * @param initialTermId what which the stream would start.
+     * @param termLength    for the stream.
+     * @return this for a fluent API.
+     */
+    public ChannelUriStringBuilder initialPosition(final long position, final int initialTermId, final int termLength)
+    {
+        final int bitsToShift = LogBufferDescriptor.positionBitsToShift(termLength);
+
+        this.initialTermId = initialTermId;
+        this.termId = LogBufferDescriptor.computeTermIdFromPosition(position, bitsToShift, initialTermId);
+        this.termOffset = (int)(position & (termLength - 1));
+        this.termLength = termLength;
+
+        return this;
+    }
+
+    /**
      * Build a channel URI String for the given parameters.
      *
      * @return a channel URI String for the given parameters.
@@ -555,6 +627,11 @@ public class ChannelUriStringBuilder
         }
 
         sb.append(ChannelUri.AERON_SCHEME).append(':').append(media).append('?');
+
+        if (null != tags)
+        {
+            sb.append(TAGS_PARAM_NAME).append('=').append(tags).append('|');
+        }
 
         if (null != endpoint)
         {
@@ -613,7 +690,7 @@ public class ChannelUriStringBuilder
 
         if (null != sessionId)
         {
-            sb.append(SESSION_ID_PARAM_NAME).append('=').append(sessionId.intValue()).append('|');
+            sb.append(SESSION_ID_PARAM_NAME).append('=').append(prefixTag(isSessionIdTagged, sessionId)).append('|');
         }
 
         if (null != linger)
@@ -640,5 +717,10 @@ public class ChannelUriStringBuilder
     public static Integer integerValueOf(final String value)
     {
         return null == value ? null : Integer.valueOf(value);
+    }
+
+    private static String prefixTag(final boolean isTagged, final Integer value)
+    {
+        return isTagged ? TAG_PREFIX + value.toString() : value.toString();
     }
 }

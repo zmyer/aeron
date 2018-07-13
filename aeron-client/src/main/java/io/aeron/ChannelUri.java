@@ -15,9 +15,13 @@
  */
 package io.aeron;
 
+import io.aeron.logbuffer.LogBufferDescriptor;
+import org.agrona.AsciiEncoding;
+import org.agrona.collections.ArrayUtil;
+
 import java.util.*;
 
-import static io.aeron.CommonContext.SPY_PREFIX;
+import static io.aeron.CommonContext.*;
 
 /**
  * Parser for Aeron channel URIs. The format is:
@@ -49,11 +53,17 @@ public class ChannelUri
      */
     public static final String SPY_QUALIFIER = "aeron-spy";
 
+    public static final long INVALID_TAG = Aeron.NULL_VALUE;
+
+    private static final int CHANNEL_TAG_INDEX = 0;
+    private static final int ENTITY_TAG_INDEX = 1;
+
     private static final String AERON_PREFIX = AERON_SCHEME + ":";
 
     private String prefix;
     private String media;
     private final Map<String, String> params;
+    private String[] tags;
 
     /**
      * Construct with the components provided to avoid parsing.
@@ -67,6 +77,8 @@ public class ChannelUri
         this.prefix = prefix;
         this.media = media;
         this.params = params;
+
+        this.tags = splitTags(params.get(TAGS_PARAM_NAME));
     }
 
     /**
@@ -176,6 +188,17 @@ public class ChannelUri
     }
 
     /**
+     * Remove a key pair in the map of params.
+     *
+     * @param key of the param to be removed.
+     * @return the previous value of the param or null.
+     */
+    public String remove(final String key)
+    {
+        return params.remove(key);
+    }
+
+    /**
      * Does the URI contain a value for the given key.
      *
      * @param key to be lookup.
@@ -184,6 +207,26 @@ public class ChannelUri
     public boolean containsKey(final String key)
     {
         return params.containsKey(key);
+    }
+
+    /**
+     * Get the channel tag.
+     *
+     * @return channel tag.
+     */
+    public String channelTag()
+    {
+        return (tags.length > CHANNEL_TAG_INDEX) ? tags[CHANNEL_TAG_INDEX] : null;
+    }
+
+    /**
+     * Get the entity tag.
+     *
+     * @return entity tag.
+     */
+    public String entityTag()
+    {
+        return (tags.length > ENTITY_TAG_INDEX) ? tags[ENTITY_TAG_INDEX] : null;
     }
 
     /**
@@ -224,6 +267,25 @@ public class ChannelUri
         }
 
         return sb.toString();
+    }
+
+    /**
+     * Initialise a channel for restarting a publication at a given position.
+     *
+     * @param position      at which the publication should be started.
+     * @param initialTermId what which the stream would start.
+     * @param termLength    for the stream.
+     */
+    public void initialPosition(final long position, final int initialTermId, final int termLength)
+    {
+        final int bitsToShift = LogBufferDescriptor.positionBitsToShift(termLength);
+        final int termId = LogBufferDescriptor.computeTermIdFromPosition(position, bitsToShift, initialTermId);
+        final int termOffset = (int)(position & (termLength - 1));
+
+        put(INITIAL_TERM_ID_PARAM_NAME, Integer.toString(initialTermId));
+        put(TERM_ID_PARAM_NAME, Integer.toString(termId));
+        put(TERM_OFFSET_PARAM_NAME, Integer.toString(termOffset));
+        put(TERM_LENGTH_PARAM_NAME, Integer.toString(termLength));
     }
 
     /**
@@ -344,10 +406,32 @@ public class ChannelUri
     public static String addSessionId(final String channel, final int sessionId)
     {
         final ChannelUri channelUri = ChannelUri.parse(channel);
-
         channelUri.put(CommonContext.SESSION_ID_PARAM_NAME, Integer.toString(sessionId));
 
         return channelUri.toString();
+    }
+
+    /**
+     * Is the param tagged? (starts with the "tag:" prefix)
+     *
+     * @param paramValue to check if tagged.
+     * @return true if tagged or false if not.
+     */
+    public static boolean isTagged(final String paramValue)
+    {
+        return startsWith(paramValue, "tag:");
+    }
+
+    /**
+     * Get the value of the tag from a given parameter.
+     *
+     * @param paramValue to extract the tag value from.
+     * @return the value of the tag or {@link #INVALID_TAG} if not tagged.
+     */
+    public static long getTag(final String paramValue)
+    {
+        return isTagged(paramValue) ?
+            AsciiEncoding.parseLongAscii(paramValue, 4, paramValue.length() - 4) : INVALID_TAG;
     }
 
     private static boolean startsWith(final CharSequence input, final int position, final CharSequence prefix)
@@ -371,5 +455,44 @@ public class ChannelUri
     private static boolean startsWith(final CharSequence input, final CharSequence prefix)
     {
         return startsWith(input, 0, prefix);
+    }
+
+    private static String[] splitTags(final CharSequence tags)
+    {
+        String[] stringArray = ArrayUtil.EMPTY_STRING_ARRAY;
+
+        if (null != tags)
+        {
+            int currentStartIndex = 0;
+            int tagIndex = 0;
+            stringArray = new String[2];
+            final int length = tags.length();
+
+            for (int i = 0; i < length; i++)
+            {
+                if (tags.charAt(i) == ',')
+                {
+                    String tag = null;
+
+                    if ((i - currentStartIndex) > 0)
+                    {
+                        tag = tags.subSequence(currentStartIndex, i).toString();
+                        currentStartIndex = i + 1;
+                    }
+
+                    stringArray = ArrayUtil.ensureCapacity(stringArray, tagIndex + 1);
+                    stringArray[tagIndex] = tag;
+                    tagIndex++;
+                }
+            }
+
+            if ((length - currentStartIndex) > 0)
+            {
+                stringArray = ArrayUtil.ensureCapacity(stringArray, tagIndex + 1);
+                stringArray[tagIndex] = tags.subSequence(currentStartIndex, length).toString();
+            }
+        }
+
+        return stringArray;
     }
 }

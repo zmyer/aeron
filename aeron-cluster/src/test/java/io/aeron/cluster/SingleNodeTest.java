@@ -15,6 +15,8 @@
  */
 package io.aeron.cluster;
 
+import io.aeron.cluster.service.ClientSession;
+import io.aeron.cluster.service.Cluster;
 import io.aeron.cluster.service.ClusteredService;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -36,6 +38,7 @@ public class SingleNodeTest
             new ConsensusModule.Context(), mockService, null, true, true, false))
         {
             harness.awaitServiceOnStart();
+            harness.awaitServiceOnRoleChange(Cluster.Role.LEADER);
         }
     }
 
@@ -50,10 +53,11 @@ public class SingleNodeTest
             new ConsensusModule.Context(), mockService, null, false, true, false))
         {
             harness.awaitServiceOnStart();
+            harness.awaitServiceOnRoleChange(Cluster.Role.LEADER);
             harness.awaitServiceOnMessageCounter(10);
 
             verify(mockService, times(10))
-                .onSessionMessage(anyLong(), anyLong(), anyLong(), any(), anyInt(), eq(100), any());
+                .onSessionMessage(any(ClientSession.class), anyLong(), anyLong(), any(), anyInt(), eq(100), any());
         }
     }
 }

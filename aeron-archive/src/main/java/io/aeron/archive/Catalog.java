@@ -15,8 +15,11 @@
  */
 package io.aeron.archive;
 
+import io.aeron.Aeron;
+import io.aeron.archive.client.ArchiveException;
 import io.aeron.archive.codecs.*;
 import io.aeron.protocol.DataHeaderFlyweight;
+import org.agrona.AsciiEncoding;
 import org.agrona.IoUtil;
 import org.agrona.LangUtil;
 import org.agrona.collections.ArrayUtil;
@@ -92,9 +95,7 @@ class Catalog implements AutoCloseable
     }
 
     static final int PAGE_SIZE = 4096;
-    static final int NULL_RECORD_ID = -1;
-
-    static final String SEGMENT_FILE_EXTENSION = ".rec";
+    static final int NULL_RECORD_ID = Aeron.NULL_VALUE;
 
     static final int DESCRIPTOR_HEADER_LENGTH = RecordingDescriptorHeaderDecoder.BLOCK_LENGTH;
     static final int DEFAULT_RECORD_LENGTH = 1024;
@@ -147,7 +148,7 @@ class Catalog implements AutoCloseable
             {
                 if (catalogPreExists)
                 {
-                    catalogLength = channel.size();
+                    catalogLength = Math.max(channel.size(), calculateCatalogLength(maxNumEntries));
                 }
                 else
                 {
@@ -287,6 +288,11 @@ class Catalog implements AutoCloseable
         return maxRecordingId + 1;
     }
 
+    public int countEntries()
+    {
+        return (int)nextRecordingId;
+    }
+
     long addNewRecording(
         final long startPosition,
         final long startTimestamp,
@@ -302,13 +308,13 @@ class Catalog implements AutoCloseable
     {
         if (nextRecordingId > maxRecordingId)
         {
-            throw new IllegalStateException("catalog is full, max recordings reached: " + maxRecordingId);
+            throw new ArchiveException("catalog is full, max recordings reached: " + maxEntries());
         }
 
         final int combinedStringsLen = strippedChannel.length() + sourceIdentity.length() + originalChannel.length();
         if (combinedStringsLen > maxDescriptorStringsCombinedLength)
         {
-            throw new IllegalArgumentException("combined length of channel:'" + strippedChannel +
+            throw new ArchiveException("combined length of channel:'" + strippedChannel +
                 "' and sourceIdentity:'" + sourceIdentity +
                 "' and originalChannel:'" + originalChannel +
                 "' exceeds max allowed:" + maxDescriptorStringsCombinedLength);
@@ -351,7 +357,7 @@ class Catalog implements AutoCloseable
 
     boolean wrapDescriptor(final long recordingId, final UnsafeBuffer buffer)
     {
-        if (recordingId < 0 || recordingId >= maxRecordingId)
+        if (recordingId < 0 || recordingId > maxRecordingId)
         {
             return false;
         }
@@ -363,7 +369,7 @@ class Catalog implements AutoCloseable
 
     boolean wrapAndValidateDescriptor(final long recordingId, final UnsafeBuffer buffer)
     {
-        if (recordingId < 0 || recordingId >= maxRecordingId)
+        if (recordingId < 0 || recordingId > maxRecordingId)
         {
             return false;
         }
@@ -384,7 +390,7 @@ class Catalog implements AutoCloseable
     void forEach(final CatalogEntryProcessor consumer)
     {
         long recordingId = 0L;
-        while (recordingId < maxRecordingId && wrapDescriptor(recordingId, catalogBuffer))
+        while (wrapDescriptor(recordingId, catalogBuffer))
         {
             descriptorHeaderDecoder.wrap(
                 catalogBuffer, 0, DESCRIPTOR_HEADER_LENGTH, RecordingDescriptorHeaderDecoder.SCHEMA_VERSION);
@@ -582,7 +588,7 @@ class Catalog implements AutoCloseable
                 buffer.clear();
                 if (HEADER_LENGTH != segment.read(buffer, nextFragmentOffset))
                 {
-                    throw new IllegalStateException("unexpected read failure from file: " +
+                    throw new ArchiveException("unexpected read failure from file: " +
                         segmentFile.getAbsolutePath() + " at position:" + nextFragmentOffset);
                 }
 
@@ -635,43 +641,49 @@ class Catalog implements AutoCloseable
         final RecordingDescriptorDecoder decoder)
     {
         final long recordingId = decoder.recordingId();
-        if (headerDecoder.valid() == VALID && decoder.stopTimestamp() == NULL_TIMESTAMP)
+        if (headerDecoder.valid() == VALID && decoder.stopPosition() == NULL_POSITION)
         {
             final String prefix = recordingId + "-";
-            String[] segmentFiles =
-                archiveDir.list((dir, name) -> name.endsWith(RECORDING_SEGMENT_POSTFIX));
-            int maxSegmentIndex = -1;
+            String[] segmentFiles = archiveDir.list(
+                (dir, name) -> name.startsWith(prefix) && name.endsWith(RECORDING_SEGMENT_POSTFIX));
 
             if (null == segmentFiles)
             {
                 segmentFiles = ArrayUtil.EMPTY_STRING_ARRAY;
             }
 
+            int maxSegmentIndex = -1;
             for (final String filename : segmentFiles)
             {
-                try
+                final int length = filename.length();
+                final int offset = prefix.length();
+                final int remaining = length - offset - RECORDING_SEGMENT_POSTFIX.length();
+
+                if (remaining > 0)
                 {
-                    final int index = Integer.valueOf(
-                        filename.substring(prefix.length(), filename.length() - RECORDING_SEGMENT_POSTFIX.length()));
-                    maxSegmentIndex = Math.max(index, maxSegmentIndex);
-                }
-                catch (final Exception ignore)
-                {
+                    try
+                    {
+                        maxSegmentIndex = Math.max(
+                            AsciiEncoding.parseIntAscii(filename, offset, remaining),
+                            maxSegmentIndex);
+                    }
+                    catch (final Exception ignore)
+                    {
+                    }
                 }
             }
-
-            final File maxSegmentFile = new File(archiveDir, segmentFileName(recordingId, maxSegmentIndex));
-            final long startPosition = decoder.startPosition();
 
             if (maxSegmentIndex < 0)
             {
-                encoder.stopPosition(startPosition);
+                encoder.stopPosition(decoder.startPosition());
             }
             else
             {
+                final File maxSegmentFile = new File(archiveDir, segmentFileName(recordingId, maxSegmentIndex));
                 final int segmentFileLength = decoder.segmentFileLength();
                 final long stopOffset = recoverStopOffset(maxSegmentFile, segmentFileLength);
                 final int termBufferLength = decoder.termBufferLength();
+                final long startPosition = decoder.startPosition();
                 final long recordingLength =
                     (startPosition & (termBufferLength - 1)) + (maxSegmentIndex * segmentFileLength) + stopOffset;
                 encoder.stopPosition(startPosition + recordingLength);

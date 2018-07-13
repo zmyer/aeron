@@ -17,6 +17,7 @@ package io.aeron.cluster;
 
 import io.aeron.Publication;
 import io.aeron.cluster.codecs.*;
+import io.aeron.exceptions.AeronException;
 import io.aeron.logbuffer.BufferClaim;
 import org.agrona.DirectBuffer;
 import org.agrona.ExpandableArrayBuffer;
@@ -27,20 +28,21 @@ class LogPublisher
     private static final int SEND_ATTEMPTS = 3;
 
     private final MessageHeaderEncoder messageHeaderEncoder = new MessageHeaderEncoder();
-    private final SessionOpenEventEncoder connectEventEncoder = new SessionOpenEventEncoder();
-    private final SessionCloseEventEncoder closeEventEncoder = new SessionCloseEventEncoder();
+    private final SessionOpenEventEncoder sessionOpenEventEncoder = new SessionOpenEventEncoder();
+    private final SessionCloseEventEncoder sessionCloseEventEncoder = new SessionCloseEventEncoder();
     private final TimerEventEncoder timerEventEncoder = new TimerEventEncoder();
-    private final ClusterActionRequestEncoder actionRequestEncoder = new ClusterActionRequestEncoder();
+    private final ClusterActionRequestEncoder clusterActionRequestEncoder = new ClusterActionRequestEncoder();
+    private final NewLeadershipTermEventEncoder newLeadershipTermEventEncoder = new NewLeadershipTermEventEncoder();
     private final ExpandableArrayBuffer expandableArrayBuffer = new ExpandableArrayBuffer();
     private final BufferClaim bufferClaim = new BufferClaim();
     private Publication publication;
 
-    public void connect(final Publication publication)
+    void connect(final Publication publication)
     {
         this.publication = publication;
     }
 
-    public void disconnect()
+    void disconnect()
     {
         if (null != publication)
         {
@@ -49,7 +51,7 @@ class LogPublisher
         }
     }
 
-    public long position()
+    long position()
     {
         if (null == publication)
         {
@@ -59,7 +61,12 @@ class LogPublisher
         return publication.position();
     }
 
-    public boolean appendMessage(final DirectBuffer buffer, final int offset, final int length, final long nowMs)
+    int sessionId()
+    {
+        return publication.sessionId();
+    }
+
+    boolean appendMessage(final DirectBuffer buffer, final int offset, final int length, final long nowMs)
     {
         final int timestampOffset =
             offset + MessageHeaderEncoder.ENCODED_LENGTH + SessionHeaderEncoder.timestampEncodingOffset();
@@ -82,13 +89,13 @@ class LogPublisher
         return false;
     }
 
-    public long appendConnectedSession(final ClusterSession session, final long nowMs)
+    long appendSessionOpen(final ClusterSession session, final long nowMs)
     {
         long result;
         final byte[] encodedPrincipal = session.encodedPrincipal();
         final String channel = session.responseChannel();
 
-        connectEventEncoder
+        sessionOpenEventEncoder
             .wrapAndApplyHeader(expandableArrayBuffer, 0, messageHeaderEncoder)
             .clusterSessionId(session.id())
             .correlationId(session.lastCorrelationId())
@@ -97,7 +104,7 @@ class LogPublisher
             .responseChannel(channel)
             .putEncodedPrincipal(encodedPrincipal, 0, encodedPrincipal.length);
 
-        final int length = connectEventEncoder.encodedLength() + MessageHeaderEncoder.ENCODED_LENGTH;
+        final int length = sessionOpenEventEncoder.encodedLength() + MessageHeaderEncoder.ENCODED_LENGTH;
 
         int attempts = SEND_ATTEMPTS;
         do
@@ -115,7 +122,7 @@ class LogPublisher
         return result;
     }
 
-    public boolean appendClosedSession(final ClusterSession session, final long nowMs)
+    boolean appendSessionClose(final ClusterSession session, final long nowMs)
     {
         final int length = MessageHeaderEncoder.ENCODED_LENGTH + SessionCloseEventEncoder.BLOCK_LENGTH;
 
@@ -125,7 +132,7 @@ class LogPublisher
             final long result = publication.tryClaim(length, bufferClaim);
             if (result > 0)
             {
-                closeEventEncoder
+                sessionCloseEventEncoder
                     .wrapAndApplyHeader(bufferClaim.buffer(), bufferClaim.offset(), messageHeaderEncoder)
                     .clusterSessionId(session.id())
                     .timestamp(nowMs)
@@ -143,7 +150,7 @@ class LogPublisher
         return false;
     }
 
-    public boolean appendTimerEvent(final long correlationId, final long nowMs)
+    boolean appendTimer(final long correlationId, final long nowMs)
     {
         final int length = MessageHeaderEncoder.ENCODED_LENGTH + TimerEventEncoder.BLOCK_LENGTH;
 
@@ -170,8 +177,8 @@ class LogPublisher
         return false;
     }
 
-    public boolean appendClusterAction(
-        final ClusterAction action, final long logPosition, final long leadershipTermId, final long nowMs)
+    boolean appendClusterAction(
+        final long leadershipTermId, final long logPosition, final long nowMs, final ClusterAction action)
     {
         final int length = MessageHeaderEncoder.ENCODED_LENGTH + ClusterActionRequestEncoder.BLOCK_LENGTH;
 
@@ -181,12 +188,47 @@ class LogPublisher
             final long result = publication.tryClaim(length, bufferClaim);
             if (result > 0)
             {
-                actionRequestEncoder.wrapAndApplyHeader(
+                clusterActionRequestEncoder.wrapAndApplyHeader(
                     bufferClaim.buffer(), bufferClaim.offset(), messageHeaderEncoder)
                     .logPosition(logPosition)
                     .leadershipTermId(leadershipTermId)
                     .timestamp(nowMs)
                     .action(action);
+
+                bufferClaim.commit();
+
+                return true;
+            }
+
+            checkResult(result);
+        }
+        while (--attempts > 0);
+
+        return false;
+    }
+
+    boolean appendNewLeadershipTermEvent(
+        final long leadershipTermId,
+        final long logPosition,
+        final long nowMs,
+        final int leaderMemberId,
+        final int logSessionId)
+    {
+        final int length = MessageHeaderEncoder.ENCODED_LENGTH + NewLeadershipTermEventEncoder.BLOCK_LENGTH;
+
+        int attempts = SEND_ATTEMPTS;
+        do
+        {
+            final long result = publication.tryClaim(length, bufferClaim);
+            if (result > 0)
+            {
+                newLeadershipTermEventEncoder.wrapAndApplyHeader(
+                    bufferClaim.buffer(), bufferClaim.offset(), messageHeaderEncoder)
+                    .leadershipTermId(leadershipTermId)
+                    .logPosition(logPosition)
+                    .timestamp(nowMs)
+                    .leaderMemberId(leaderMemberId)
+                    .logSessionId(logSessionId);
 
                 bufferClaim.commit();
 
@@ -206,7 +248,7 @@ class LogPublisher
             result == Publication.CLOSED ||
             result == Publication.MAX_POSITION_EXCEEDED)
         {
-            throw new IllegalStateException("unexpected publication state: " + result);
+            throw new AeronException("unexpected publication state: " + result);
         }
     }
 }

@@ -35,39 +35,49 @@ class IngressAdapter implements ControlledFragmentHandler, AutoCloseable
     private final SessionKeepAliveRequestDecoder keepAliveRequestDecoder = new SessionKeepAliveRequestDecoder();
     private final ChallengeResponseDecoder challengeResponseDecoder = new ChallengeResponseDecoder();
 
+    private Subscription subscription;
     private final ControlledFragmentAssembler fragmentAssembler = new ControlledFragmentAssembler(this);
-    private final Subscription subscription;
-    private final SequencerAgent sequencerAgent;
+    private final ConsensusModuleAgent consensusModuleAgent;
     private final AtomicCounter invalidRequests;
 
-    IngressAdapter(
-        final Subscription subscription, final SequencerAgent sequencerAgent, final AtomicCounter invalidRequests)
+    IngressAdapter(final ConsensusModuleAgent consensusModuleAgent, final AtomicCounter invalidRequests)
     {
-        this.subscription = subscription;
-        this.sequencerAgent = sequencerAgent;
+        this.consensusModuleAgent = consensusModuleAgent;
         this.invalidRequests = invalidRequests;
     }
 
     public void close()
     {
         CloseHelper.close(subscription);
-    }
-
-    public int poll()
-    {
-        return subscription.controlledPoll(fragmentAssembler, FRAGMENT_POLL_LIMIT);
+        subscription = null;
+        fragmentAssembler.clear();
     }
 
     public Action onFragment(final DirectBuffer buffer, final int offset, final int length, final Header header)
     {
         messageHeaderDecoder.wrap(buffer, offset);
-
-        final byte[] credentials;
-
         final int templateId = messageHeaderDecoder.templateId();
+
+        if (templateId == SessionHeaderDecoder.TEMPLATE_ID)
+        {
+            sessionHeaderDecoder.wrap(
+                buffer,
+                offset + MessageHeaderDecoder.ENCODED_LENGTH,
+                messageHeaderDecoder.blockLength(),
+                messageHeaderDecoder.version());
+
+            return consensusModuleAgent.onSessionMessage(
+                buffer,
+                offset,
+                length,
+                sessionHeaderDecoder.clusterSessionId(),
+                sessionHeaderDecoder.correlationId());
+        }
+
         switch (templateId)
         {
             case SessionConnectRequestDecoder.TEMPLATE_ID:
+            {
                 connectRequestDecoder.wrap(
                     buffer,
                     offset + MessageHeaderDecoder.ENCODED_LENGTH,
@@ -76,70 +86,83 @@ class IngressAdapter implements ControlledFragmentHandler, AutoCloseable
 
                 final String responseChannel = connectRequestDecoder.responseChannel();
 
-                credentials = new byte[connectRequestDecoder.encodedCredentialsLength()];
+                final byte[] credentials = new byte[connectRequestDecoder.encodedCredentialsLength()];
                 connectRequestDecoder.getEncodedCredentials(credentials, 0, credentials.length);
 
-                sequencerAgent.onSessionConnect(
+                consensusModuleAgent.onSessionConnect(
                     connectRequestDecoder.correlationId(),
                     connectRequestDecoder.responseStreamId(),
                     responseChannel,
                     credentials);
                 break;
-
-            case SessionHeaderDecoder.TEMPLATE_ID:
-                sessionHeaderDecoder.wrap(
-                    buffer,
-                    offset + MessageHeaderDecoder.ENCODED_LENGTH,
-                    messageHeaderDecoder.blockLength(),
-                    messageHeaderDecoder.version());
-
-                return sequencerAgent.onSessionMessage(
-                    buffer,
-                    offset,
-                    length,
-                    sessionHeaderDecoder.clusterSessionId(),
-                    sessionHeaderDecoder.correlationId());
+            }
 
             case SessionCloseRequestDecoder.TEMPLATE_ID:
+            {
                 closeRequestDecoder.wrap(
                     buffer,
                     offset + MessageHeaderDecoder.ENCODED_LENGTH,
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                sequencerAgent.onSessionClose(closeRequestDecoder.clusterSessionId());
+                consensusModuleAgent.onSessionClose(closeRequestDecoder.clusterSessionId());
                 break;
+            }
 
             case SessionKeepAliveRequestDecoder.TEMPLATE_ID:
+            {
                 keepAliveRequestDecoder.wrap(
                     buffer,
                     offset + MessageHeaderDecoder.ENCODED_LENGTH,
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                sequencerAgent.onSessionKeepAlive(keepAliveRequestDecoder.clusterSessionId());
+                consensusModuleAgent.onSessionKeepAlive(keepAliveRequestDecoder.clusterSessionId());
                 break;
+            }
 
             case ChallengeResponseDecoder.TEMPLATE_ID:
+            {
                 challengeResponseDecoder.wrap(
                     buffer,
                     offset + MessageHeaderDecoder.ENCODED_LENGTH,
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                credentials = new byte[challengeResponseDecoder.encodedCredentialsLength()];
+                final byte[] credentials = new byte[challengeResponseDecoder.encodedCredentialsLength()];
                 challengeResponseDecoder.getEncodedCredentials(credentials, 0, credentials.length);
 
-                sequencerAgent.onChallengeResponse(
+                consensusModuleAgent.onChallengeResponse(
                     challengeResponseDecoder.correlationId(),
                     challengeResponseDecoder.clusterSessionId(),
                     credentials);
                 break;
+            }
 
             default:
                 invalidRequests.incrementOrdered();
         }
 
         return Action.CONTINUE;
+    }
+
+    void subscription(final Subscription subscription)
+    {
+        this.subscription = subscription;
+    }
+
+    int poll()
+    {
+        if (null == subscription)
+        {
+            return 0;
+        }
+
+        return subscription.controlledPoll(fragmentAssembler, FRAGMENT_POLL_LIMIT);
+    }
+
+    void freeSessionBuffer(final int imageSessionId)
+    {
+        fragmentAssembler.freeSessionBuffer(imageSessionId);
     }
 }

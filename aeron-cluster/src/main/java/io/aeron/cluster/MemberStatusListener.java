@@ -15,24 +15,45 @@
  */
 package io.aeron.cluster;
 
-import org.agrona.DirectBuffer;
+import io.aeron.cluster.codecs.RecordingLogDecoder;
+import io.aeron.cluster.codecs.RecoveryPlanDecoder;
 
-public interface MemberStatusListener
+interface MemberStatusListener
 {
-    void onCanvassPosition(long logPosition, long leadershipTermId, int followerMemberId);
+    void onCanvassPosition(long logLeadershipTermId, long logPosition, int followerMemberId);
 
-    void onRequestVote(long logPosition, long candidateTermId, int candidateId);
+    void onRequestVote(long logLeadershipTermId, long logPosition, long candidateTermId, int candidateId);
 
-    void onVote(long candidateTermId, int candidateMemberId, int followerMemberId, boolean vote);
+    void onVote(
+        long candidateTermId,
+        long logLeadershipTermId,
+        long logPosition,
+        int candidateMemberId,
+        int followerMemberId,
+        boolean vote);
 
-    void onNewLeadershipTerm(long logPosition, long leadershipTermId, int leaderMemberId, int logSessionId);
+    void onNewLeadershipTerm(
+        long logLeadershipTermId, long logPosition, long leadershipTermId, int leaderMemberId, int logSessionId);
 
-    void onAppendedPosition(long logPosition, long leadershipTermId, int followerMemberId);
+    void onAppendedPosition(long leadershipTermId, long logPosition, int followerMemberId);
 
-    void onCommitPosition(long logPosition, long leadershipTermId, int leaderMemberId);
+    void onCommitPosition(long leadershipTermId, long logPosition, int leaderMemberId);
 
-    void onQueryResponse(
-        long correlationId, int requestMemberId, int responseMemberId, DirectBuffer data, int offset, int length);
+    void onCatchupPosition(long leadershipTermId, long logPosition, int followerMemberId);
 
-    void onRecoveryPlanQuery(long correlationId, int leaderMemberId, int requestMemberId);
+    void onStopCatchup(int replaySessionId, int followerMemberId);
+
+    void onRecoveryPlanQuery(long correlationId, int requestMemberId, int leaderMemberId);
+
+    void onRecoveryPlan(RecoveryPlanDecoder recoveryPlanDecoder);
+
+    void onRecordingLogQuery(
+        long correlationId,
+        int requestMemberId,
+        int leaderMemberId,
+        long fromLeadershipTermId,
+        int count,
+        boolean includeSnapshots);
+
+    void onRecordingLog(RecordingLogDecoder recordingLogDecoder);
 }

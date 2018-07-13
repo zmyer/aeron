@@ -15,13 +15,10 @@
  */
 package io.aeron.cluster;
 
-import io.aeron.Publication;
 import io.aeron.archive.Archive;
 import io.aeron.archive.ArchiveThreadingMode;
 import io.aeron.cluster.client.AeronCluster;
-import io.aeron.cluster.client.AuthenticationException;
-import io.aeron.cluster.client.CredentialsSupplier;
-import io.aeron.cluster.client.SessionDecorator;
+import io.aeron.security.*;
 import io.aeron.cluster.service.ClientSession;
 import io.aeron.cluster.service.ClusteredService;
 import io.aeron.cluster.service.ClusteredServiceContainer;
@@ -33,13 +30,12 @@ import org.agrona.DirectBuffer;
 import org.agrona.ExpandableArrayBuffer;
 import org.agrona.collections.MutableLong;
 import org.agrona.collections.MutableReference;
-import org.agrona.concurrent.NoOpLock;
 import org.junit.After;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.aeron.cluster.client.NullCredentialsSupplier.NULL_CREDENTIAL;
+import static io.aeron.security.NullCredentialsSupplier.NULL_CREDENTIAL;
 import static org.agrona.BitUtil.SIZE_OF_INT;
 import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertThat;
@@ -58,8 +54,6 @@ public class AuthenticationTest
 
     private final ExpandableArrayBuffer msgBuffer = new ExpandableArrayBuffer();
     private AeronCluster aeronCluster;
-    private SessionDecorator sessionDecorator;
-    private Publication publication;
 
     private final byte[] encodedCredentials = CREDENTIALS_STRING.getBytes();
     private final byte[] encodedChallenge = CHALLENGE_STRING.getBytes();
@@ -70,11 +64,6 @@ public class AuthenticationTest
         CloseHelper.close(aeronCluster);
         CloseHelper.close(container);
         CloseHelper.close(clusteredMediaDriver);
-
-        if (null != container)
-        {
-            container.context().deleteDirectory();
-        }
 
         if (null != clusteredMediaDriver)
         {
@@ -121,19 +110,19 @@ public class AuthenticationTest
                     fail();
                 }
 
-                public void onProcessConnectedSession(final SessionProxy sessionProxy, final long nowMs)
+                public void onConnectedSession(final SessionProxy sessionProxy, final long nowMs)
                 {
                     assertThat(authenticatorSessionId.value, is(sessionProxy.sessionId()));
                     sessionProxy.authenticate(null);
                 }
 
-                public void onProcessChallengedSession(final SessionProxy sessionProxy, final long nowMs)
+                public void onChallengedSession(final SessionProxy sessionProxy, final long nowMs)
                 {
                     fail();
                 }
             });
 
-        launchClusteredMediaDriver((ctx) -> authenticator);
+        launchClusteredMediaDriver(() -> authenticator);
         launchService(serviceSessionId, encodedPrincipal, serviceMsgCounter);
 
         connectClient(credentialsSupplier);
@@ -186,19 +175,19 @@ public class AuthenticationTest
                     fail();
                 }
 
-                public void onProcessConnectedSession(final SessionProxy sessionProxy, final long nowMs)
+                public void onConnectedSession(final SessionProxy sessionProxy, final long nowMs)
                 {
                     assertThat(authenticatorSessionId.value, is(sessionProxy.sessionId()));
                     sessionProxy.authenticate(PRINCIPAL_STRING.getBytes());
                 }
 
-                public void onProcessChallengedSession(final SessionProxy sessionProxy, final long nowMs)
+                public void onChallengedSession(final SessionProxy sessionProxy, final long nowMs)
                 {
                     fail();
                 }
             });
 
-        launchClusteredMediaDriver((ctx) -> authenticator);
+        launchClusteredMediaDriver(() -> authenticator);
         launchService(serviceSessionId, encodedPrincipal, serviceMsgCounter);
 
         connectClient(credentialsSupplier);
@@ -255,13 +244,13 @@ public class AuthenticationTest
                     challengeSuccessful = true;
                 }
 
-                public void onProcessConnectedSession(final SessionProxy sessionProxy, final long nowMs)
+                public void onConnectedSession(final SessionProxy sessionProxy, final long nowMs)
                 {
                     assertThat(authenticatorSessionId.value, is(sessionProxy.sessionId()));
                     sessionProxy.challenge(encodedChallenge);
                 }
 
-                public void onProcessChallengedSession(final SessionProxy sessionProxy, final long nowMs)
+                public void onChallengedSession(final SessionProxy sessionProxy, final long nowMs)
                 {
                     if (challengeSuccessful)
                     {
@@ -271,7 +260,7 @@ public class AuthenticationTest
                 }
             });
 
-        launchClusteredMediaDriver((ctx) -> authenticator);
+        launchClusteredMediaDriver(() -> authenticator);
         launchService(serviceSessionId, encodedPrincipal, serviceMsgCounter);
 
         connectClient(credentialsSupplier);
@@ -324,19 +313,19 @@ public class AuthenticationTest
                     fail();
                 }
 
-                public void onProcessConnectedSession(final SessionProxy sessionProxy, final long nowMs)
+                public void onConnectedSession(final SessionProxy sessionProxy, final long nowMs)
                 {
                     assertThat(authenticatorSessionId.value, is(sessionProxy.sessionId()));
                     sessionProxy.reject();
                 }
 
-                public void onProcessChallengedSession(final SessionProxy sessionProxy, final long nowMs)
+                public void onChallengedSession(final SessionProxy sessionProxy, final long nowMs)
                 {
                     fail();
                 }
             });
 
-        launchClusteredMediaDriver((ctx) -> authenticator);
+        launchClusteredMediaDriver(() -> authenticator);
         launchService(serviceSessionId, encodedPrincipal, serviceMsgCounter);
 
         try
@@ -393,13 +382,13 @@ public class AuthenticationTest
                     challengeRespondedTo = true;
                 }
 
-                public void onProcessConnectedSession(final SessionProxy sessionProxy, final long nowMs)
+                public void onConnectedSession(final SessionProxy sessionProxy, final long nowMs)
                 {
                     assertThat(authenticatorSessionId.value, is(sessionProxy.sessionId()));
                     sessionProxy.challenge(encodedChallenge);
                 }
 
-                public void onProcessChallengedSession(final SessionProxy sessionProxy, final long nowMs)
+                public void onChallengedSession(final SessionProxy sessionProxy, final long nowMs)
                 {
                     if (challengeRespondedTo)
                     {
@@ -409,7 +398,7 @@ public class AuthenticationTest
                 }
             });
 
-        launchClusteredMediaDriver((ctx) -> authenticator);
+        launchClusteredMediaDriver(() -> authenticator);
         launchService(serviceSessionId, encodedPrincipal, serviceMsgCounter);
 
         try
@@ -427,11 +416,10 @@ public class AuthenticationTest
 
     private void sendCountedMessageIntoCluster(final int value)
     {
-        final long msgCorrelationId = aeronCluster.context().aeron().nextCorrelationId();
-
+        final long msgCorrelationId = aeronCluster.nextCorrelationId();
         msgBuffer.putInt(0, value);
 
-        while (sessionDecorator.offer(publication, msgCorrelationId, msgBuffer, 0, SIZE_OF_INT) < 0)
+        while (aeronCluster.offer(msgCorrelationId, msgBuffer, 0, SIZE_OF_INT) < 0)
         {
             TestUtil.checkInterruptedStatus();
             Thread.yield();
@@ -446,16 +434,14 @@ public class AuthenticationTest
             {
                 private int counterValue = 0;
 
-                public void onSessionOpen(
-                    final ClientSession session,
-                    final long timestampMs)
+                public void onSessionOpen(final ClientSession session, final long timestampMs)
                 {
                     sessionId.value = session.id();
                     encodedPrincipal.set(session.encodedPrincipal());
                 }
 
                 public void onSessionMessage(
-                    final long clusterSessionId,
+                    final ClientSession session,
                     final long correlationId,
                     final long timestampMs,
                     final DirectBuffer buffer,
@@ -474,25 +460,20 @@ public class AuthenticationTest
         container = ClusteredServiceContainer.launch(
             new ClusteredServiceContainer.Context()
                 .clusteredService(service)
-                .errorHandler(Throwable::printStackTrace)
-                .deleteDirOnStart(true));
+                .errorHandler(Throwable::printStackTrace));
     }
 
     private AeronCluster connectToCluster(final CredentialsSupplier credentialsSupplier)
     {
         return AeronCluster.connect(
             new AeronCluster.Context()
-                .credentialsSupplier(credentialsSupplier)
-                .lock(new NoOpLock()));
+                .credentialsSupplier(credentialsSupplier));
     }
 
     private void connectClient(final CredentialsSupplier credentialsSupplier)
     {
         aeronCluster = null;
-
         aeronCluster = connectToCluster(credentialsSupplier);
-        sessionDecorator = new SessionDecorator(aeronCluster.clusterSessionId());
-        publication = aeronCluster.ingressPublication();
     }
 
     private void launchClusteredMediaDriver(final AuthenticatorSupplier authenticatorSupplier)

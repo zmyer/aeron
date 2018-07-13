@@ -16,7 +16,6 @@
 package io.aeron.driver;
 
 import io.aeron.driver.buffer.*;
-import io.aeron.driver.cmd.*;
 import io.aeron.driver.media.*;
 import io.aeron.driver.reports.LossReport;
 import io.aeron.driver.status.SystemCounters;
@@ -32,7 +31,6 @@ import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
 
 import static io.aeron.logbuffer.LogBufferDescriptor.*;
-import static junit.framework.TestCase.assertTrue;
 import static org.agrona.BitUtil.align;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.Is.is;
@@ -94,7 +92,7 @@ public class ReceiverTest
     private InetSocketAddress senderAddress = new InetSocketAddress("localhost", 40123);
     private Receiver receiver;
     private ReceiverProxy receiverProxy;
-    private final ManyToOneConcurrentArrayQueue<DriverConductorCmd> toConductorQueue =
+    private final ManyToOneConcurrentArrayQueue<Runnable> toConductorQueue =
         new ManyToOneConcurrentArrayQueue<>(Configuration.CMD_QUEUE_CAPACITY);
 
     private ReceiveChannelEndpoint receiveChannelEndpoint;
@@ -136,6 +134,7 @@ public class ReceiverTest
         ctx.receiveChannelEndpointThreadLocals(new ReceiveChannelEndpointThreadLocals(ctx));
 
         receiver = new Receiver(ctx);
+        receiverProxy.receiver(receiver);
 
         senderChannel = DatagramChannel.open();
         senderChannel.bind(senderAddress);
@@ -172,12 +171,13 @@ public class ReceiverTest
         receiver.doWork();
 
         fillSetupFrame(setupHeader);
-        receiveChannelEndpoint.onSetupMessage(setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress);
+        receiveChannelEndpoint.onSetupMessage(setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress, 0);
 
         final PublicationImage image = new PublicationImage(
             CORRELATION_ID,
             Configuration.IMAGE_LIVENESS_TIMEOUT_NS,
             receiveChannelEndpoint,
+            0,
             senderAddress,
             SESSION_ID,
             STREAM_ID,
@@ -200,13 +200,6 @@ public class ReceiverTest
 
         final int messagesRead = toConductorQueue.drain((e) ->
         {
-            final CreatePublicationImageCmd cmd = (CreatePublicationImageCmd)e;
-
-            assertThat(cmd.channelEndpoint().udpChannel(), is(UDP_CHANNEL));
-            assertThat(cmd.streamId(), is(STREAM_ID));
-            assertThat(cmd.sessionId(), is(SESSION_ID));
-            assertThat(cmd.termId(), is(ACTIVE_TERM_ID));
-
             // pass in new term buffer from conductor, which should trigger SM
             receiverProxy.newPublicationImage(receiveChannelEndpoint, image);
         });
@@ -247,16 +240,16 @@ public class ReceiverTest
         receiver.doWork();
 
         fillSetupFrame(setupHeader);
-        receiveChannelEndpoint.onSetupMessage(setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress);
+        receiveChannelEndpoint.onSetupMessage(setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress, 0);
 
         final int commandsRead = toConductorQueue.drain((e) ->
         {
-            assertTrue(e instanceof CreatePublicationImageCmd);
             // pass in new term buffer from conductor, which should trigger SM
             final PublicationImage image = new PublicationImage(
                 CORRELATION_ID,
                 Configuration.IMAGE_LIVENESS_TIMEOUT_NS,
                 receiveChannelEndpoint,
+                0,
                 senderAddress,
                 SESSION_ID,
                 STREAM_ID,
@@ -285,7 +278,7 @@ public class ReceiverTest
         receiver.doWork();
 
         fillDataFrame(dataHeader, 0, FAKE_PAYLOAD);
-        receiveChannelEndpoint.onDataPacket(dataHeader, dataBuffer, dataHeader.frameLength(), senderAddress);
+        receiveChannelEndpoint.onDataPacket(dataHeader, dataBuffer, dataHeader.frameLength(), senderAddress, 0);
 
         final int readOutcome = TermReader.read(
             termBuffers[ACTIVE_INDEX],
@@ -317,16 +310,16 @@ public class ReceiverTest
         receiver.doWork();
 
         fillSetupFrame(setupHeader);
-        receiveChannelEndpoint.onSetupMessage(setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress);
+        receiveChannelEndpoint.onSetupMessage(setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress, 0);
 
         final int commandsRead = toConductorQueue.drain((e) ->
         {
-            assertTrue(e instanceof CreatePublicationImageCmd);
             // pass in new term buffer from conductor, which should trigger SM
             final PublicationImage image = new PublicationImage(
                 CORRELATION_ID,
                 Configuration.IMAGE_LIVENESS_TIMEOUT_NS,
                 receiveChannelEndpoint,
+                0,
                 senderAddress,
                 SESSION_ID,
                 STREAM_ID,
@@ -355,10 +348,10 @@ public class ReceiverTest
         receiver.doWork();
 
         fillDataFrame(dataHeader, 0, FAKE_PAYLOAD);  // initial data frame
-        receiveChannelEndpoint.onDataPacket(dataHeader, dataBuffer, dataHeader.frameLength(), senderAddress);
+        receiveChannelEndpoint.onDataPacket(dataHeader, dataBuffer, dataHeader.frameLength(), senderAddress, 0);
 
         fillDataFrame(dataHeader, 0, FAKE_PAYLOAD);  // heartbeat with same term offset
-        receiveChannelEndpoint.onDataPacket(dataHeader, dataBuffer, dataHeader.frameLength(), senderAddress);
+        receiveChannelEndpoint.onDataPacket(dataHeader, dataBuffer, dataHeader.frameLength(), senderAddress, 0);
 
         final int readOutcome = TermReader.read(
             termBuffers[ACTIVE_INDEX],
@@ -390,16 +383,16 @@ public class ReceiverTest
         receiver.doWork();
 
         fillSetupFrame(setupHeader);
-        receiveChannelEndpoint.onSetupMessage(setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress);
+        receiveChannelEndpoint.onSetupMessage(setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress, 0);
 
         final int commandsRead = toConductorQueue.drain((e) ->
         {
-            assertTrue(e instanceof CreatePublicationImageCmd);
             // pass in new term buffer from conductor, which should trigger SM
             final PublicationImage image = new PublicationImage(
                 CORRELATION_ID,
                 Configuration.IMAGE_LIVENESS_TIMEOUT_NS,
                 receiveChannelEndpoint,
+                0,
                 senderAddress,
                 SESSION_ID,
                 STREAM_ID,
@@ -428,10 +421,10 @@ public class ReceiverTest
         receiver.doWork();
 
         fillDataFrame(dataHeader, 0, FAKE_PAYLOAD);  // heartbeat with same term offset
-        receiveChannelEndpoint.onDataPacket(dataHeader, dataBuffer, dataHeader.frameLength(), senderAddress);
+        receiveChannelEndpoint.onDataPacket(dataHeader, dataBuffer, dataHeader.frameLength(), senderAddress, 0);
 
         fillDataFrame(dataHeader, 0, FAKE_PAYLOAD);  // initial data frame
-        receiveChannelEndpoint.onDataPacket(dataHeader, dataBuffer, dataHeader.frameLength(), senderAddress);
+        receiveChannelEndpoint.onDataPacket(dataHeader, dataBuffer, dataHeader.frameLength(), senderAddress, 0);
 
         final int readOutcome = TermReader.read(
             termBuffers[ACTIVE_INDEX],
@@ -467,16 +460,16 @@ public class ReceiverTest
         receiver.doWork();
 
         fillSetupFrame(setupHeader, initialTermOffset);
-        receiveChannelEndpoint.onSetupMessage(setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress);
+        receiveChannelEndpoint.onSetupMessage(setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress, 0);
 
         final int commandsRead = toConductorQueue.drain((e) ->
         {
-            assertTrue(e instanceof CreatePublicationImageCmd);
             // pass in new term buffer from conductor, which should trigger SM
             final PublicationImage image = new PublicationImage(
                 CORRELATION_ID,
                 Configuration.IMAGE_LIVENESS_TIMEOUT_NS,
                 receiveChannelEndpoint,
+                0,
                 senderAddress,
                 SESSION_ID,
                 STREAM_ID,
@@ -507,7 +500,7 @@ public class ReceiverTest
         receiver.doWork();
 
         fillDataFrame(dataHeader, initialTermOffset, FAKE_PAYLOAD);  // initial data frame
-        receiveChannelEndpoint.onDataPacket(dataHeader, dataBuffer, alignedDataFrameLength, senderAddress);
+        receiveChannelEndpoint.onDataPacket(dataHeader, dataBuffer, alignedDataFrameLength, senderAddress, 0);
 
         verify(mockHighestReceivedPosition).setOrdered(initialTermOffset + alignedDataFrameLength);
 
@@ -541,7 +534,7 @@ public class ReceiverTest
         receiver.doWork();
 
         fillSetupFrame(setupHeader);
-        receiveChannelEndpoint.onSetupMessage(setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress);
+        receiveChannelEndpoint.onSetupMessage(setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress, 0);
 
         final PublicationImage mockImage = mock(PublicationImage.class);
         when(mockImage.sessionId()).thenReturn(SESSION_ID);
@@ -563,7 +556,7 @@ public class ReceiverTest
         receiver.doWork();
 
         fillSetupFrame(setupHeader);
-        receiveChannelEndpoint.onSetupMessage(setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress);
+        receiveChannelEndpoint.onSetupMessage(setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress, 0);
 
         final PublicationImage mockImage = mock(PublicationImage.class);
         when(mockImage.sessionId()).thenReturn(SESSION_ID);

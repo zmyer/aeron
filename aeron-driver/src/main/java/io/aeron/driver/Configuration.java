@@ -19,7 +19,7 @@ import io.aeron.Aeron;
 import io.aeron.CommonContext;
 import io.aeron.Image;
 import io.aeron.Publication;
-import io.aeron.driver.exceptions.ConfigurationException;
+import io.aeron.exceptions.ConfigurationException;
 import io.aeron.driver.media.ReceiveChannelEndpoint;
 import io.aeron.driver.media.SendChannelEndpoint;
 import io.aeron.logbuffer.FrameDescriptor;
@@ -288,7 +288,7 @@ public class Configuration
     /**
      * The ratio for sending data to polling status messages in the Sender.
      */
-    public static final int SEND_TO_STATUS_POLL_RATIO_DEFAULT = 4;
+    public static final int SEND_TO_STATUS_POLL_RATIO_DEFAULT = 6;
 
     /**
      * Property name for SO_RCVBUF setting on UDP sockets which must be sufficient for Bandwidth Delay Produce (BDP).
@@ -894,7 +894,7 @@ public class Configuration
             default:
                 try
                 {
-                    idleStrategy = (IdleStrategy)Class.forName(strategyName).newInstance();
+                    idleStrategy = (IdleStrategy)Class.forName(strategyName).getConstructor().newInstance();
                 }
                 catch (final Exception ex)
                 {
@@ -967,7 +967,9 @@ public class Configuration
         SendChannelEndpointSupplier supplier = null;
         try
         {
-            supplier = (SendChannelEndpointSupplier)Class.forName(SEND_CHANNEL_ENDPOINT_SUPPLIER).newInstance();
+            supplier = (SendChannelEndpointSupplier)Class.forName(SEND_CHANNEL_ENDPOINT_SUPPLIER)
+                .getConstructor()
+                .newInstance();
         }
         catch (final Exception ex)
         {
@@ -988,7 +990,9 @@ public class Configuration
         ReceiveChannelEndpointSupplier supplier = null;
         try
         {
-            supplier = (ReceiveChannelEndpointSupplier)Class.forName(RECEIVE_CHANNEL_ENDPOINT_SUPPLIER).newInstance();
+            supplier = (ReceiveChannelEndpointSupplier)Class.forName(RECEIVE_CHANNEL_ENDPOINT_SUPPLIER)
+                .getConstructor()
+                .newInstance();
         }
         catch (final Exception ex)
         {
@@ -1009,7 +1013,9 @@ public class Configuration
         FlowControlSupplier supplier = null;
         try
         {
-            supplier = (FlowControlSupplier)Class.forName(UNICAST_FLOW_CONTROL_STRATEGY_SUPPLIER).newInstance();
+            supplier = (FlowControlSupplier)Class.forName(UNICAST_FLOW_CONTROL_STRATEGY_SUPPLIER)
+                .getConstructor()
+                .newInstance();
         }
         catch (final Exception ex)
         {
@@ -1030,7 +1036,9 @@ public class Configuration
         FlowControlSupplier supplier = null;
         try
         {
-            supplier = (FlowControlSupplier)Class.forName(MULTICAST_FLOW_CONTROL_STRATEGY_SUPPLIER).newInstance();
+            supplier = (FlowControlSupplier)Class.forName(MULTICAST_FLOW_CONTROL_STRATEGY_SUPPLIER)
+                .getConstructor()
+                .newInstance();
         }
         catch (final Exception ex)
         {
@@ -1050,7 +1058,9 @@ public class Configuration
         CongestionControlSupplier supplier = null;
         try
         {
-            supplier = (CongestionControlSupplier)Class.forName(CONGESTION_CONTROL_STRATEGY_SUPPLIER).newInstance();
+            supplier = (CongestionControlSupplier)Class.forName(CONGESTION_CONTROL_STRATEGY_SUPPLIER)
+                .getConstructor()
+                .newInstance();
         }
         catch (final Exception ex)
         {

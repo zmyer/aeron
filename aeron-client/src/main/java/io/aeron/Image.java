@@ -15,6 +15,7 @@
  */
 package io.aeron;
 
+import io.aeron.exceptions.AeronException;
 import io.aeron.logbuffer.*;
 import io.aeron.logbuffer.ControlledFragmentHandler.Action;
 import org.agrona.*;
@@ -217,7 +218,7 @@ public class Image
     {
         if (isClosed)
         {
-            throw new IllegalStateException("Image is closed");
+            throw new AeronException("Image is closed");
         }
 
         validatePosition(newPosition);
@@ -410,7 +411,7 @@ public class Image
         int initialOffset = (int)initialPosition & termLengthMask;
         int resultingOffset = initialOffset;
         final UnsafeBuffer termBuffer = activeTermBuffer(initialPosition);
-        final int endOffset = Math.min(termBuffer.capacity(), (int)(maxPosition - initialPosition + initialOffset));
+        final int endOffset = (int)Math.min(termBuffer.capacity(), maxPosition - initialPosition + initialOffset);
         header.buffer(termBuffer);
 
         try

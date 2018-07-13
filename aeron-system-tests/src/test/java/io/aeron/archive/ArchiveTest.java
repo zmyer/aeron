@@ -16,6 +16,7 @@
 package io.aeron.archive;
 
 import io.aeron.*;
+import io.aeron.archive.client.AeronArchive;
 import io.aeron.archive.client.ArchiveProxy;
 import io.aeron.archive.client.ControlResponseAdapter;
 import io.aeron.archive.client.RecordingEventsAdapter;
@@ -595,7 +596,7 @@ public class ArchiveTest
 
             while (remaining > 0)
             {
-                final int fragments = replay.poll(this::validateFragment2, 10);
+                final int fragments = replay.poll(this::validateFragment, 10);
                 if (0 == fragments)
                 {
                     SystemTest.checkInterruptedStatus();
@@ -626,12 +627,12 @@ public class ArchiveTest
             catalog.recordingSummary(recordingId, new RecordingSummary()),
             archiveDir,
             NULL_POSITION,
-            RecordingFragmentReader.NULL_LENGTH,
+            AeronArchive.NULL_LENGTH,
             null))
         {
             while (!archiveDataFileReader.isDone())
             {
-                archiveDataFileReader.controlledPoll(this::validateFragment1, messageCount);
+                archiveDataFileReader.controlledPoll(this::validateReplayFragment, messageCount);
                 SystemTest.checkInterruptedStatus();
             }
         }
@@ -640,7 +641,14 @@ public class ArchiveTest
         assertThat(this.messageCount, is(messageCount));
     }
 
-    private boolean validateFragment1(final UnsafeBuffer buffer, final int offset, final int length)
+    @SuppressWarnings("unused")
+    private boolean validateReplayFragment(
+        final UnsafeBuffer buffer,
+        final int offset,
+        final int length,
+        final int frameType,
+        final byte flags,
+        final long reservedValue)
     {
         if (!FrameDescriptor.isPaddingFrame(buffer, offset - HEADER_LENGTH))
         {
@@ -660,11 +668,8 @@ public class ArchiveTest
         return true;
     }
 
-    private void validateFragment2(
-        final DirectBuffer buffer,
-        final int offset,
-        final int length,
-        @SuppressWarnings("unused") final Header header)
+    @SuppressWarnings("unused")
+    private void validateFragment(final DirectBuffer buffer, final int offset, final int length, final Header header)
     {
         assertThat(length, is(messageLengths[messageCount] - HEADER_LENGTH));
         assertThat(buffer.getInt(offset), is(messageCount));
@@ -766,7 +771,7 @@ public class ArchiveTest
 
                     while (this.messageCount < messageCount)
                     {
-                        final int fragments = replay.poll(this::validateFragment2, 10);
+                        final int fragments = replay.poll(this::validateFragment, 10);
                         if (0 == fragments)
                         {
                             SystemTest.checkInterruptedStatus();

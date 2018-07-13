@@ -16,6 +16,7 @@
 package io.aeron.cluster.service;
 
 import io.aeron.Aeron;
+import io.aeron.cluster.client.ClusterException;
 
 import java.util.Collection;
 
@@ -52,7 +53,7 @@ public interface Cluster
                 final int code = role.code();
                 if (null != ROLES[code])
                 {
-                    throw new IllegalStateException("code already in use: " + code);
+                    throw new ClusterException("code already in use: " + code);
                 }
 
                 ROLES[code] = role;
@@ -145,7 +146,7 @@ public interface Cluster
      * If the correlationId is for an existing scheduled timer then it will be reschedule to the new deadline.
      *
      * @param correlationId to identify the timer when it expires.
-     * @param deadlineMs after which the timer will fire.
+     * @param deadlineMs Epoch time in milliseconds after which the timer will fire.
      * @return true if the event to schedule a timer has been sent or false if back pressure is applied.
      * @see #cancelTimer(long)
      */
@@ -159,4 +160,10 @@ public interface Cluster
      * @see #scheduleTimer(long, long)
      */
     boolean cancelTimer(long correlationId);
+
+    /**
+     * Should be called by the service when it experiences back pressure on egress, closing sessions, or making
+     * timer requests.
+     */
+    void idle();
 }

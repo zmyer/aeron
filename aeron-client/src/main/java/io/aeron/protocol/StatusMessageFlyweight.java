@@ -15,6 +15,7 @@
  */
 package io.aeron.protocol;
 
+import io.aeron.exceptions.AeronException;
 import org.agrona.concurrent.UnsafeBuffer;
 
 import java.nio.ByteBuffer;
@@ -23,14 +24,15 @@ import java.nio.ByteOrder;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 /**
- * Flyweight for a Status Message Packet
- *
- * @see <a href="https://github.com/real-logic/Aeron/wiki/Protocol-Specification#status-messages">Status Message</a>
+ * Flyweight for a Status Message Frame.
+ * <p>
+ * <a target="_blank" href="https://github.com/real-logic/aeron/wiki/Protocol-Specification#status-messages">
+ *     Status Message</a> wiki page.
  */
 public class StatusMessageFlyweight extends HeaderFlyweight
 {
     /**
-     * Length of the Status Message Packet
+     * Length of the Status Message Frame
      */
     public static final int HEADER_LENGTH = 36;
 
@@ -265,7 +267,7 @@ public class StatusMessageFlyweight extends HeaderFlyweight
         {
             if (frameLength > capacity())
             {
-                throw new IllegalStateException(String.format(
+                throw new AeronException(String.format(
                     "SM application specific feedback (%d) is truncated (%d)",
                     frameLength - HEADER_LENGTH,
                     capacity() - HEADER_LENGTH));

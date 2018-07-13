@@ -18,6 +18,7 @@ package io.aeron.cluster.service;
 import io.aeron.Aeron;
 import io.aeron.DirectBufferVector;
 import io.aeron.Publication;
+import io.aeron.cluster.client.ClusterException;
 import io.aeron.cluster.codecs.MessageHeaderEncoder;
 import io.aeron.cluster.codecs.SessionHeaderEncoder;
 import org.agrona.CloseHelper;
@@ -41,24 +42,27 @@ public class ClientSession
     public static final long MOCKED_OFFER = 1;
 
     private final long id;
+    private long lastCorrelationId;
     private final int responseStreamId;
     private final String responseChannel;
     private final byte[] encodedPrincipal;
     private final DirectBufferVector[] vectors = new DirectBufferVector[2];
     private final DirectBufferVector messageBuffer = new DirectBufferVector();
     private final SessionHeaderEncoder sessionHeaderEncoder = new SessionHeaderEncoder();
-    private final Cluster cluster;
+    private final ClusteredServiceAgent cluster;
     private Publication responsePublication;
     private boolean isClosing;
 
     ClientSession(
         final long sessionId,
+        final long correlationId,
         final int responseStreamId,
         final String responseChannel,
         final byte[] encodedPrincipal,
-        final Cluster cluster)
+        final ClusteredServiceAgent cluster)
     {
         this.id = sessionId;
+        this.lastCorrelationId = correlationId;
         this.responseStreamId = responseStreamId;
         this.responseChannel = responseChannel;
         this.encodedPrincipal = encodedPrincipal;
@@ -124,6 +128,16 @@ public class ClientSession
     }
 
     /**
+     * Get the last correlation id processed on this session.
+     *
+     * @return the last correlation id processed on this session.
+     */
+    public long lastCorrelationId()
+    {
+        return lastCorrelationId;
+    }
+
+    /**
      * Non-blocking publish of a partial buffer containing a message to a cluster.
      *
      * @param correlationId to be used to identify the message to the cluster.
@@ -144,8 +158,52 @@ public class ClientSession
             return MOCKED_OFFER;
         }
 
-        sessionHeaderEncoder.correlationId(correlationId);
-        sessionHeaderEncoder.timestamp(cluster.timeMs());
+        if (null == responsePublication)
+        {
+            throw new ClusterException("session not connected id=" + id);
+        }
+
+        sessionHeaderEncoder
+            .correlationId(correlationId)
+            .timestamp(cluster.timeMs());
+
+        messageBuffer.reset(buffer, offset, length);
+
+        return responsePublication.offer(vectors, null);
+    }
+
+    /**
+     * Non-blocking publish of a partial buffer containing a message to a cluster.
+     *
+     * @param correlationId to be used to identify the message to the cluster.
+     * @param timestampMs   to be used for when the response was generated.
+     * @param buffer        containing message.
+     * @param offset        offset in the buffer at which the encoded message begins.
+     * @param length        in bytes of the encoded message.
+     * @return the same as {@link Publication#offer(DirectBuffer, int, int)} when in {@link Cluster.Role#LEADER}
+     * otherwise {@link #MOCKED_OFFER}.
+     */
+    public long offer(
+        final long correlationId,
+        final long timestampMs,
+        final DirectBuffer buffer,
+        final int offset,
+        final int length)
+    {
+        if (cluster.role() != Cluster.Role.LEADER)
+        {
+            return MOCKED_OFFER;
+        }
+
+        if (null == responsePublication)
+        {
+            throw new ClusterException("session not connected id=" + id);
+        }
+
+        sessionHeaderEncoder
+            .correlationId(correlationId)
+            .timestamp(timestampMs);
+
         messageBuffer.reset(buffer, offset, length);
 
         return responsePublication.offer(vectors, null);
@@ -153,12 +211,10 @@ public class ClientSession
 
     void connect(final Aeron aeron)
     {
-        if (null != responsePublication)
+        if (null == responsePublication)
         {
-            throw new IllegalStateException("response publication already added");
+            responsePublication = aeron.addPublication(responseChannel, responseStreamId);
         }
-
-        responsePublication = aeron.addPublication(responseChannel, responseStreamId);
     }
 
     void markClosing()
@@ -166,9 +222,19 @@ public class ClientSession
         this.isClosing = true;
     }
 
+    void resetClosing()
+    {
+        isClosing = false;
+    }
+
     void disconnect()
     {
         CloseHelper.close(responsePublication);
         responsePublication = null;
+    }
+
+    void lastCorrelationId(final long correlationId)
+    {
+        lastCorrelationId = correlationId;
     }
 }

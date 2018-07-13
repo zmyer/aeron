@@ -18,7 +18,7 @@ package io.aeron.exceptions;
 /**
  * Generic timeout has occurred while waiting on some action or event.
  */
-public class TimeoutException extends RuntimeException
+public class TimeoutException extends AeronException
 {
     public TimeoutException()
     {

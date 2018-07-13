@@ -18,10 +18,9 @@ package io.aeron.driver;
 import io.aeron.ErrorCode;
 import io.aeron.command.*;
 import org.agrona.DirectBuffer;
-import org.agrona.concurrent.UnsafeBuffer;
+import org.agrona.ExpandableArrayBuffer;
+import org.agrona.MutableDirectBuffer;
 import org.agrona.concurrent.broadcast.BroadcastTransmitter;
-
-import java.nio.ByteBuffer;
 
 import static io.aeron.command.ControlProtocolEvents.*;
 
@@ -30,9 +29,7 @@ import static io.aeron.command.ControlProtocolEvents.*;
  */
 public class ClientProxy
 {
-    private static final int WRITE_BUFFER_CAPACITY = 4096;
-
-    private final UnsafeBuffer buffer = new UnsafeBuffer(ByteBuffer.allocateDirect(WRITE_BUFFER_CAPACITY));
+    private final MutableDirectBuffer buffer = new ExpandableArrayBuffer(1024);
     private final BroadcastTransmitter transmitter;
 
     private final ErrorResponseFlyweight errorResponse = new ErrorResponseFlyweight();
@@ -65,7 +62,7 @@ public class ClientProxy
             .errorCode(errorCode)
             .errorMessage(msg);
 
-        transmit(ON_ERROR, buffer, 0, errorResponse.length());
+        transmit(ON_ERROR, buffer, errorResponse.length());
     }
 
     public void onAvailableImage(
@@ -86,8 +83,7 @@ public class ClientProxy
             .logFileName(logFileName)
             .sourceIdentity(sourceIdentity);
 
-        final int length = imageReady.length();
-        transmit(ON_AVAILABLE_IMAGE, buffer, 0, length);
+        transmit(ON_AVAILABLE_IMAGE, buffer, imageReady.length());
     }
 
     public void onPublicationReady(
@@ -109,9 +105,8 @@ public class ClientProxy
             .channelStatusCounterId(channelStatusCounterId)
             .logFileName(logFileName);
 
-        final int length = publicationReady.length();
         final int msgTypeId = isExclusive ? ON_EXCLUSIVE_PUBLICATION_READY : ON_PUBLICATION_READY;
-        transmit(msgTypeId, buffer, 0, length);
+        transmit(msgTypeId, buffer, publicationReady.length());
     }
 
     public void onSubscriptionReady(
@@ -121,14 +116,14 @@ public class ClientProxy
             .correlationId(correlationId)
             .channelStatusCounterId(channelStatusCounterId);
 
-        transmit(ON_SUBSCRIPTION_READY, buffer, 0, SubscriptionReadyFlyweight.LENGTH);
+        transmit(ON_SUBSCRIPTION_READY, buffer, SubscriptionReadyFlyweight.LENGTH);
     }
 
     public void operationSucceeded(final long correlationId)
     {
         operationSucceeded.correlationId(correlationId);
 
-        transmit(ON_OPERATION_SUCCESS, buffer, 0, OperationSucceededFlyweight.LENGTH);
+        transmit(ON_OPERATION_SUCCESS, buffer, OperationSucceededFlyweight.LENGTH);
     }
 
     public void onUnavailableImage(
@@ -140,8 +135,7 @@ public class ClientProxy
             .streamId(streamId)
             .channel(channel);
 
-        final int length = imageMessage.length();
-        transmit(ON_UNAVAILABLE_IMAGE, buffer, 0, length);
+        transmit(ON_UNAVAILABLE_IMAGE, buffer, imageMessage.length());
     }
 
     public void onCounterReady(final long correlationId, final int counterId)
@@ -150,7 +144,7 @@ public class ClientProxy
             .correlationId(correlationId)
             .counterId(counterId);
 
-        transmit(ON_COUNTER_READY, buffer, 0, CounterUpdateFlyweight.LENGTH);
+        transmit(ON_COUNTER_READY, buffer, CounterUpdateFlyweight.LENGTH);
     }
 
     public void onUnavailableCounter(final long registrationId, final int counterId)
@@ -159,11 +153,11 @@ public class ClientProxy
             .correlationId(registrationId)
             .counterId(counterId);
 
-        transmit(ON_UNAVAILABLE_COUNTER, buffer, 0, CounterUpdateFlyweight.LENGTH);
+        transmit(ON_UNAVAILABLE_COUNTER, buffer, CounterUpdateFlyweight.LENGTH);
     }
 
-    private void transmit(final int msgTypeId, final DirectBuffer buffer, final int index, final int length)
+    private void transmit(final int msgTypeId, final DirectBuffer buffer, final int length)
     {
-        transmitter.transmit(msgTypeId, buffer, index, length);
+        transmitter.transmit(msgTypeId, buffer, 0, length);
     }
 }
